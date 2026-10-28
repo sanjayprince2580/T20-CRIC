@@ -50,7 +50,7 @@ def db_conn():
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ 8bf3ebd4-e908-47f8-8ceb-d391c7280181 ⚠️
+        # ⚠️ PASTE YOUR CRICAPI KEY HERE ⚠️
         self.api_key = "8bf3ebd4-e908-47f8-8ceb-d391c7280181" 
         self.base_url = "https://api.cricapi.com/v1"
 
