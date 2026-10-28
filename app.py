@@ -1,5 +1,5 @@
 """
-T20 Cricket Match Analysis App - ULTIMATE BULLETPROOF VERSION
+T20 Cricket Match Analysis App - REAL DATA ONLY (No Fallbacks)
 """
 import asyncio
 import random
@@ -60,84 +60,38 @@ class RealDataProvider:
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                # Fetch BOTH Live and Upcoming to ensure we don't miss anything
-                for endpoint in ["live", "upcoming"]:
-                    resp = await client.get(f"{self.base_url}/matches/v1/{endpoint}", headers=self.headers, timeout=15.0)
-                    data = resp.json()
-                    
-                    now = datetime.utcnow()
-                    future_limit = now + timedelta(days=30) # Look 30 days ahead
+                # Fetch live matches (guaranteed to have real data)
+                resp = await client.get(f"{self.base_url}/matches/v1/live", headers=self.headers, timeout=15.0)
+                data = resp.json()
+                
+                print(f"API Status Code: {resp.status_code}")
 
-                    for type_match in data.get("typeMatches", []):
-                        for series in type_match.get("seriesMatches", []):
-                            series_data = series.get("seriesAdWrapper", {})
-                            if not series_data: continue
+                for type_match in data.get("typeMatches", []):
+                    for series in type_match.get("seriesMatches", []):
+                        series_data = series.get("seriesAdWrapper", {})
+                        if not series_data: continue
+                        
+                        for m in series_data.get("matches", []):
+                            match_info = m.get("matchInfo", {})
+                            if "T20" not in match_info.get("matchFormat", ""):
+                                continue
                             
-                            for m in series_data.get("matches", []):
-                                match_info = m.get("matchInfo", {})
-                                if "T20" not in match_info.get("matchFormat", ""):
-                                    continue
-                                
-                                # Check if already added
-                                if any(existing["external_id"] == str(match_info["matchId"]) for existing in matches):
-                                    continue
-
-                                start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
-                                
-                                if now - timedelta(hours=6) <= start_time <= future_limit:
-                                    matches.append({
-                                        "external_id": str(match_info["matchId"]),
-                                        "team1": match_info["team1"]["teamName"],
-                                        "team2": match_info["team2"]["teamName"],
-                                        "start_time": start_time.isoformat(),
-                                        "venue": match_info.get("venueInfo", {}).get("ground", "Unknown Stadium"),
-                                        "city": match_info.get("venueInfo", {}).get("city", "Unknown City"),
-                                    })
+                            start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
+                            
+                            matches.append({
+                                "external_id": str(match_info["matchId"]),
+                                "team1": match_info["team1"]["teamName"],
+                                "team2": match_info["team2"]["teamName"],
+                                "start_time": start_time.isoformat(),
+                                "venue": match_info.get("venueInfo", {}).get("ground", "Unknown Stadium"),
+                                "city": match_info.get("venueInfo", {}).get("city", "Unknown City"),
+                            })
             except Exception as e:
                 print(f"API Fetch Error: {e}")
                 
-        # Fallback: If API returns 0 matches (limits or no games), generate fake domestic ones
-        if len(matches) == 0:
-            print("⚠️ API returned 0 matches. Generating Fallback Matches...")
-            matches = self._generate_fallback_matches()
-            
         return matches
 
-    def _generate_fallback_matches(self):
-        fallback_teams = [
-            ("Sydney Sixers", "Melbourne Stars"), # WBBL
-            ("Mumbai Indians", "Chennai Super Kings"), # IPL Style
-            ("Lahore Qalandars", "Karachi Kings"), # PSL
-            ("India", "Australia"), 
-            ("England", "South Africa")
-        ]
-        now = datetime.utcnow()
-        fake_matches = []
-        for i, (t1, t2) in enumerate(fallback_teams):
-            start_time = now - timedelta(hours=1) if i == 0 else now + timedelta(hours=i*3)
-            fake_matches.append({
-                "external_id": f"FALLBACK_{i}",
-                "team1": t1,
-                "team2": t2,
-                "start_time": start_time.isoformat(),
-                "venue": "Wankhede Stadium",
-                "city": "Mumbai",
-            })
-        return fake_matches
-
     async def fetch_match_details(self, external_id: str):
-        # If it's a fallback match, we simulate live data for testing
-        if external_id.startswith("FALLBACK_"):
-            if external_id == "FALLBACK_0":
-                return {
-                    "matchStarted": True, "matchEnded": False, 
-                    "live_score": "145/4 (15.2 ov)", "runs": 145, "wickets": 4, "overs": 15.2,
-                    "toss_winner": "Sydney Sixers", "toss_decision": "bat",
-                    "xi1": ["Player A", "Player B", "Player C"], "xi2": ["Player X", "Player Y", "Player Z"]
-                }
-            return None
-
-        # Real API fetch for live score
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(f"{self.base_url}/mcenter/v1/{external_id}/hscard", headers=self.headers, timeout=15.0)
@@ -259,9 +213,9 @@ engine = AnalysisEngine()
 # 4. SCHEDULED JOBS
 # =========================================================
 async def refresh_matches_job():
-    print("[CRON] Fetching matches...")
+    print("[CRON] Fetching live T20 matches...")
     matches = await provider.fetch_upcoming_matches()
-    print(f"[CRON] Found {len(matches)} T20 matches.")
+    print(f"[CRON] Found {len(matches)} real T20 matches.")
     
     conn = db_conn()
     for m in matches:
@@ -355,8 +309,8 @@ HTML_PAGE = """
 const view = document.getElementById('view');
 async function loadMatches() {
   const res = await fetch('/api/matches'); const matches = await res.json();
-  if (!matches.length) { view.innerHTML = 'No matches found.'; return; }
-  view.innerHTML = '<h1>🏏 Upcoming Matches</h1>' + matches.map(m => `
+  if (!matches.length) { view.innerHTML = 'No real matches found right now.'; return; }
+  view.innerHTML = '<h1>🏏 Live & Upcoming Matches</h1>' + matches.map(m => `
     <div class="card" onclick="openMatch(${m.id})">
       <div><strong>${m.team1} vs ${m.team2}</strong></div>
       <div style="font-size:0.85rem; color:#94a3b8;">${m.venue}</div>
