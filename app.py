@@ -1,11 +1,10 @@
 """
-T20 Cricket Match Analysis App - FINAL PRO VERSION (High Accuracy Engine)
+T20 Cricket Match Analysis App - BULLETPROOF SCHEDULE FETCHER
 """
 import asyncio
 import random
 import sqlite3
 import json
-import re
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
@@ -46,11 +45,11 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (CricAPI)
+# 2. REAL DATA PROVIDER (Series Approach)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ YOUR API KEY IS HERE ⚠️
+        # ⚠️ YOUR API KEY ⚠️
         self.api_key = "8bf3ebd4-e908-47f8-8ceb-d391c7280181" 
         self.base_url = "https://api.cricapi.com/v1"
 
@@ -58,41 +57,52 @@ class RealDataProvider:
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(f"{self.base_url}/currentMatches?apikey={self.api_key}&offset=0", timeout=15.0)
-                data = resp.json()
+                # Step 1: Get all active/upcoming T20 series
+                resp = await client.get(f"{self.base_url}/series?apikey={self.api_key}&offset=0", timeout=20.0)
+                series_data = resp.json()
                 
-                if data.get("status") != "success":
-                    print("API Error:", data)
+                if series_data.get("status") != "success":
+                    print("Series API Error:", series_data)
                     return []
 
-                print(f"API returned {len(data.get('data', []))} total matches.")
                 now = datetime.utcnow()
-                
-                # CHANGED TO 30 DAYS
-                future_limit = now + timedelta(days=30) 
+                future_limit = now + timedelta(days=30)
 
-                for m in data.get("data", []):
-                    if "T20" not in m.get("matchType", ""):
+                # Filter series to only T20s
+                t20_series_ids = []
+                for s in series_data.get("data", []):
+                    if "T20" in s.get("name", "") or "T20" in s.get("type", ""):
+                        t20_series_ids.append(s["id"])
+
+                print(f"Found {len(t20_series_ids)} T20 Series. Fetching matches...")
+
+                # Step 2: Loop through those series to get their matches
+                for series_id in t20_series_ids:
+                    match_resp = await client.get(f"{self.base_url}/series_info?apikey={self.api_key}&id={series_id}", timeout=20.0)
+                    match_data = match_resp.json()
+
+                    if match_data.get("status") != "success":
                         continue
                     
-                    start_str = m.get("dateTimeGMT", "").replace("Z", "")
-                    if not start_str: continue
-                    
-                    try:
-                        start_time = datetime.fromisoformat(start_str)
-                    except:
-                        continue
+                    for m in match_data.get("data", {}).get("matchList", []):
+                        start_str = m.get("dateTimeGMT", "").replace("Z", "")
+                        if not start_str: continue
+                        
+                        try:
+                            start_time = datetime.fromisoformat(start_str)
+                        except:
+                            continue
 
-                    # Look 4 hours in the past (live matches) up to 30 days in the future
-                    if now - timedelta(hours=4) <= start_time <= future_limit:
-                        matches.append({
-                            "external_id": m["id"],
-                            "team1": m["teams"][0],
-                            "team2": m["teams"][1],
-                            "start_time": start_time.isoformat(),
-                            "venue": m.get("venue", "Unknown Stadium"),
-                            "city": m.get("venue", "Unknown City").split(",")[-1].strip(),
-                        })
+                        # Keep matches that are happening now or within the next 30 days
+                        if now - timedelta(hours=6) <= start_time <= future_limit:
+                            matches.append({
+                                "external_id": m["id"],
+                                "team1": m["teams"][0],
+                                "team2": m["teams"][1],
+                                "start_time": start_time.isoformat(),
+                                "venue": m.get("venue", "Unknown Stadium"),
+                                "city": m.get("venue", "Unknown City").split(",")[-1].strip(),
+                            })
             except Exception as e:
                 print(f"Failed to fetch matches: {e}")
         return matches
@@ -108,7 +118,6 @@ class RealDataProvider:
 
                 match_info = data.get("data", {})
                 
-                # Extract Live Score
                 live_score = None
                 current_runs = 0
                 current_wickets = 0
