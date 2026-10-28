@@ -1,17 +1,15 @@
 """
-T20 Cricket Match Analysis App - GOOGLE LIVE SCRAPER (No Limits)
+T20 Cricket Match Analysis App - TESTING VERSION (Hardcoded Real Matches)
 """
 import asyncio
 import random
 import sqlite3
 import json
-import re
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # =========================================================
@@ -46,91 +44,31 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (Google Scraper - No Limits)
+# 2. REAL DATA PROVIDER (Hardcoded from your Screenshot)
 # =========================================================
 class RealDataProvider:
-    def __init__(self):
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-
     async def fetch_upcoming_matches(self):
-        matches = []
-        async with httpx.AsyncClient() as client:
-            try:
-                # Scrape Google for live cricket matches
-                url = "https://www.google.com/search?q=live+cricket+score+t20"
-                resp = await client.get(url, headers=self.headers, timeout=15.0)
-                html = resp.text
-                
-                # Google includes live match data in a hidden JSON script block
-                # We find the script block containing the data
-                pattern = re.compile(r'data:(\[.*?\])', re.DOTALL)
-                match = pattern.search(html)
-                
-                if match:
-                    # Clean up the JSON to make it parsable
-                    raw_json = match.group(1)
-                    raw_json = raw_json.replace('\\x22', '"').replace('\\', '')
-                    data = json.loads(raw_json)
-                    
-                    # Traverse Google's JSON structure to find matches
-                    for item in data:
-                        if isinstance(item, list) and len(item) > 0:
-                            for sub_item in item:
-                                if isinstance(sub_item, str) and " vs " in sub_item:
-                                    teams = sub_item.split(" vs ")
-                                    t1, t2 = teams[0].strip(), teams[1].strip()
-                                    
-                                    # Extract score if available
-                                    score = "Yet to bat"
-                                    for s in item:
-                                        if isinstance(s, str) and "(" in s and ")" in s and "/" in s:
-                                            score = s
-                                            break
-                                    
-                                    matches.append({
-                                        "external_id": f"GGL_{random.randint(1000,9999)}",
-                                        "team1": t1,
-                                        "team2": t2,
-                                        "start_time": datetime.utcnow().isoformat(),
-                                        "venue": "Live from Google",
-                                        "city": "N/A",
-                                        "region": "International",
-                                        "score": score
-                                    })
-            except Exception as e:
-                print(f"Google Scrape Error: {e}")
-                
-        # If Google blocks us, use the real matches from your screenshot
-        if len(matches) == 0:
-            print("⚠️ Google Scrape Failed. Using Fallback.")
-            matches = self._generate_crex_fallback()
-            
-        return matches
-
-    def _generate_crex_fallback(self):
         now = datetime.utcnow()
+        # These are the exact matches from your CREX screenshot
         return [
-            {"external_id": "CREX_1", "team1": "Toronto Kings", "team2": "Mississauga Skyhawks", "start_time": (now + timedelta(hours=2)).isoformat(), "venue": "Toronto", "city": "Canada", "region": "Canada", "score": "143/4 (15.0 ov)"},
-            {"external_id": "CREX_2", "team1": "Melbourne Renegades Women", "team2": "Sydney Thunder Women", "start_time": (now + timedelta(hours=4)).isoformat(), "venue": "Sydney", "city": "Australia", "region": "Australia", "score": "Yet to bat"},
-            {"external_id": "CREX_3", "team1": "Janakpur Bolts", "team2": "Kathmandu Gurkhas", "start_time": (now + timedelta(hours=6)).isoformat(), "venue": "Kathmandu", "city": "Nepal", "region": "Nepal", "score": "Yet to bat"},
-            {"external_id": "CREX_4", "team1": "Melbourne Stars Women", "team2": "Hobart Hurricanes Women", "start_time": (now + timedelta(hours=8)).isoformat(), "venue": "Melbourne", "city": "Australia", "region": "Australia", "score": "Yet to bat"},
-            {"external_id": "CREX_5", "team1": "Karnali Yaks", "team2": "Biratnagar Kings", "start_time": (now + timedelta(hours=10)).isoformat(), "venue": "Nepal", "city": "Nepal", "region": "Nepal", "score": "Yet to bat"},
+            {"external_id": "LIVE_1", "team1": "Toronto Kings", "team2": "Mississauga Skyhawks", "start_time": (now - timedelta(minutes=30)).isoformat(), "venue": "Toronto", "city": "Canada", "region": "Canada"},
+            {"external_id": "UPCOMING_2", "team1": "Melbourne Renegades Women", "team2": "Sydney Thunder Women", "start_time": (now + timedelta(hours=2)).isoformat(), "venue": "Sydney", "city": "Australia", "region": "Australia"},
+            {"external_id": "UPCOMING_3", "team1": "Janakpur Bolts", "team2": "Kathmandu Gurkhas", "start_time": (now + timedelta(hours=4)).isoformat(), "venue": "Kathmandu", "city": "Nepal", "region": "Nepal"},
+            {"external_id": "UPCOMING_4", "team1": "Melbourne Stars Women", "team2": "Hobart Hurricanes Women", "start_time": (now + timedelta(hours=6)).isoformat(), "venue": "Melbourne", "city": "Australia", "region": "Australia"},
+            {"external_id": "UPCOMING_5", "team1": "Karnali Yaks", "team2": "Biratnagar Kings", "start_time": (now + timedelta(hours=8)).isoformat(), "venue": "Nepal", "city": "Nepal", "region": "Nepal"},
         ]
 
     async def fetch_match_details(self, external_id: str):
-        # For fallback matches, simulate live data for the first one
-        if external_id.startswith("CREX_"):
-            if external_id == "CREX_1":
-                return {
-                    "matchStarted": True, "matchEnded": False, 
-                    "live_score": "143/4 (15.0 ov)", "runs": 143, "wickets": 4, "overs": 15.0,
-                    "toss_winner": "Toronto Kings", "toss_decision": "bat",
-                    "xi1": ["Player A", "Player B", "Player C"], "xi2": ["Player X", "Player Y", "Player Z"]
-                }
-            return None
-        return None
+        # Make the first match LIVE so you can test the 80% engine
+        if external_id == "LIVE_1":
+            return {
+                "matchStarted": True, "matchEnded": False, 
+                "live_score": "143/4 (15.0 ov)", "runs": 143, "wickets": 4, "overs": 15.0,
+                "toss_winner": "Toronto Kings", "toss_decision": "bat",
+                "xi1": ["Colin Munro", "Rassie van der Dussen", "Nicholas Pooran"], 
+                "xi2": ["David Wiese", "Dwayne Bravo", "Faf du Plessis"]
+            }
+        return None # Other matches are not started yet
 
 provider = RealDataProvider()
 
@@ -237,26 +175,6 @@ async def refresh_matches_job():
     conn.commit()
     conn.close()
 
-async def check_toss_job():
-    conn = db_conn()
-    pending = conn.execute("SELECT * FROM matches WHERE status='pre' OR status='post' OR status='live'").fetchall()
-    for row in pending:
-        details = await provider.fetch_match_details(row["external_id"])
-        if details and details["matchStarted"]:
-            pre = json.loads(row["pre_analysis"])
-            post = engine.post_toss_analysis(dict(row), details, pre)
-            
-            new_status = 'live' if details.get("live_score") and not details.get("matchEnded") else 'post'
-            
-            conn.execute(
-                """UPDATE matches SET toss_winner=?, toss_decision=?, xi1=?, xi2=?,
-                   post_analysis=?, live_score=?, confidence=?, status=? WHERE id=?""",
-                (details["toss_winner"], details["toss_decision"], json.dumps(details["xi1"]), json.dumps(details["xi2"]),
-                 json.dumps(post), details.get("live_score"), post["confidence"], new_status, row["id"])
-            )
-    conn.commit()
-    conn.close()
-
 # =========================================================
 # 5. FASTAPI APP & FRONTEND
 # =========================================================
@@ -266,8 +184,6 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     init_db()
     await refresh_matches_job()
-    scheduler.add_job(refresh_matches_job, "interval", minutes=60)
-    scheduler.add_job(check_toss_job, "interval", minutes=15)
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -285,9 +201,29 @@ async def list_matches():
 async def get_match(match_id: int):
     conn = db_conn()
     row = conn.execute("SELECT * FROM matches WHERE id=?", (match_id,)).fetchone()
-    conn.close()
-    if not row: raise HTTPException(404, "Match not found")
+    if not row: 
+        conn.close()
+        raise HTTPException(404, "Match not found")
+        
     d = dict(row)
+    
+    # INSTANT LIVE FETCH: Make the first match show data immediately
+    if d["status"] == "pre":
+        details = await provider.fetch_match_details(d["external_id"])
+        if details and details["matchStarted"]:
+            pre = json.loads(d["pre_analysis"])
+            post = engine.post_toss_analysis(d, details, pre)
+            conn.execute(
+                """UPDATE matches SET toss_winner=?, toss_decision=?, xi1=?, xi2=?,
+                   post_analysis=?, live_score=?, confidence=?, status='live' WHERE id=?""",
+                (details["toss_winner"], details["toss_decision"], json.dumps(details["xi1"]), json.dumps(details["xi2"]),
+                 json.dumps(post), details.get("live_score"), post["confidence"], match_id)
+            )
+            conn.commit()
+            d["status"] = 'live'
+            d["post_analysis"] = json.dumps(post)
+            
+    conn.close()
     d["pre_analysis"] = json.loads(d["pre_analysis"]) if d["pre_analysis"] else None
     d["post_analysis"] = json.loads(d["post_analysis"]) if d["post_analysis"] else None
     return d
@@ -367,10 +303,15 @@ async function openMatch(id) {
       ${q.live_score ? `<div class="live-box"><div>🔴 LIVE SCORE</div><div style="font-size:1.5rem; font-weight:bold">${q.live_score}</div></div>` : ''}
       <div style="margin-top:16px; padding:12px; background:#334155; border-radius:8px">🪙 ${q.toss_summary}</div>
       <h3>Reasoning</h3>${q.reasoning.map(r => `<div>▸ ${r}</div>`).join('')}
+      
+      <h3 style="margin-top:16px">Playing XI</h3>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.8rem">
+        <div><strong>${m.team1}</strong><br>${q.xi1.join('<br>')}</div>
+        <div><strong>${m.team2}</strong><br>${q.xi2.join('<br>')}</div>
+      </div>
     </div>`;
   } else { html += `<div class="section">⏳ Awaiting Toss...</div>`; }
   view.innerHTML = html;
-  if (m.status === 'live') setTimeout(() => openMatch(id), 15000);
 }
 loadMatches();
 </script>
