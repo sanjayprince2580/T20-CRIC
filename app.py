@@ -50,7 +50,7 @@ def db_conn():
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ PASTE YOUR CRICAPI KEY HERE ⚠️
+        # ⚠️ YOUR API KEY IS HERE ⚠️
         self.api_key = "8bf3ebd4-e908-47f8-8ceb-d391c7280181" 
         self.base_url = "https://api.cricapi.com/v1"
 
@@ -65,8 +65,11 @@ class RealDataProvider:
                     print("API Error:", data)
                     return []
 
+                print(f"API returned {len(data.get('data', []))} total matches.")
                 now = datetime.utcnow()
-                three_days_from_now = now + timedelta(days=3)
+                
+                # CHANGED TO 30 DAYS
+                future_limit = now + timedelta(days=30) 
 
                 for m in data.get("data", []):
                     if "T20" not in m.get("matchType", ""):
@@ -80,7 +83,8 @@ class RealDataProvider:
                     except:
                         continue
 
-                    if now - timedelta(hours=4) <= start_time <= three_days_from_now:
+                    # Look 4 hours in the past (live matches) up to 30 days in the future
+                    if now - timedelta(hours=4) <= start_time <= future_limit:
                         matches.append({
                             "external_id": m["id"],
                             "team1": m["teams"][0],
@@ -147,7 +151,6 @@ provider = RealDataProvider()
 class AnalysisEngine:
     def pre_analysis(self, match):
         t1, t2 = match["team1"], match["team2"]
-        # Generate strong baseline stats
         h2h = {"team1_wins": random.randint(5, 12), "team2_wins": random.randint(2, 8)}
         form = {
             t1: [random.choice(["W", "W", "W", "L", "W"]) for _ in range(5)],
@@ -171,15 +174,12 @@ class AnalysisEngine:
         live_score = details.get("live_score")
         match_ended = details.get("matchEnded", False)
 
-        # 1. BASE PREDICTION (Pre-Match Logic)
         base_score = {t1: 50.0, t2: 50.0}
         
-        # Toss advantage
         if decision == "bowl" and pre["venue_stats"]["pitch_type"] == "Batting paradise":
             chaser = t2 if toss_winner == t1 else t1
-            base_score[chaser] += 15.0  # Massive boost for chasing on flat pitch
+            base_score[chaser] += 15.0
             
-        # Form advantage
         form1 = pre["recent_form"][t1].count("W")
         form2 = pre["recent_form"][t2].count("W")
         base_score[t1] += (form1 - form2) * 3
@@ -187,7 +187,6 @@ class AnalysisEngine:
 
         reasons = [f"{toss_winner} won the toss and chose to {decision}."]
         
-        # 2. LIVE MATCH PREDICTION (The 80%+ Logic)
         if live_score and details["runs"] > 0:
             runs = details["runs"]
             wkts = details["wickets"]
@@ -198,15 +197,12 @@ class AnalysisEngine:
             else:
                 current_rr = 0
                 
-            # Assuming the batting team is the one with the live score
             batting_team = toss_winner if decision == "bat" else (t2 if toss_winner == t1 else t1)
             bowling_team = t1 if batting_team == t2 else t2
 
-            # Scenario A: 1st Innings (Projecting Final Score)
             if overs <= 20 and runs > 0:
                 projected_score = current_rr * 20
-                
-                if overs > 15: # Death overs projection is more accurate
+                if overs > 15:
                     if projected_score > 190:
                         base_score[batting_team] += 25
                         reasons.append(f"Batting team is on track for a massive {int(projected_score)}.")
@@ -214,7 +210,6 @@ class AnalysisEngine:
                         base_score[bowling_team] += 25
                         reasons.append(f"Batting team struggling. Projected score only {int(projected_score)}.")
                 
-                # Wickets in hand factor
                 if wkts <= 2 and overs > 10:
                     base_score[batting_team] += 15
                     reasons.append("Plenty of wickets in hand for the final overs.")
@@ -222,10 +217,8 @@ class AnalysisEngine:
                     base_score[bowling_team] += 20
                     reasons.append("Batting collapse! Bowling team is dominating.")
 
-            # Scenario B: 2nd Innings (Chasing)
-            # If current runs are less than 200, we assume it's a chase
             if runs < 200 and overs > 5: 
-                target = random.randint(170, 195) # Mock target if API doesn't provide it
+                target = random.randint(170, 195) 
                 runs_needed = target - runs
                 balls_left = (20 - overs) * 6
                 
@@ -233,7 +226,7 @@ class AnalysisEngine:
                     rrr = (runs_needed / balls_left) * 6
                     
                     if rrr > 14:
-                        base_score[bowling_team] += 35 # 80%+ Confidence!
+                        base_score[bowling_team] += 35 
                         reasons.append(f"Required run rate is a massive {rrr:.2f}. Bowling team heavily favored.")
                     elif rrr > 10:
                         base_score[bowling_team] += 20
@@ -243,10 +236,9 @@ class AnalysisEngine:
                         reasons.append(f"Chasing team is cruising. Needs just {rrr:.2f} RPO.")
                     
                     if wkts >= 7 and rrr > 9:
-                        base_score[bowling_team] += 15 # Extra confidence for bowlers
+                        base_score[bowling_team] += 15 
                         reasons.append("Too many wickets fallen for the chasing team to recover.")
 
-        # 3. FINAL NORMALIZATION
         total = base_score[t1] + base_score[t2]
         p1 = round((base_score[t1] / total) * 100, 1)
         p2 = round(100 - p1, 1)
@@ -254,7 +246,6 @@ class AnalysisEngine:
         winner = t1 if p1 > p2 else t2
         confidence = max(p1, p2)
 
-        # Force minimum 80% if the live match logic triggers a massive advantage
         if confidence > 70 and (details.get("wickets", 0) > 6 or "Required run rate is a massive" in "".join(reasons)):
             confidence = max(confidence, 80.5) 
 
@@ -280,7 +271,9 @@ engine = AnalysisEngine()
 # 4. SCHEDULED JOBS
 # =========================================================
 async def refresh_matches_job():
+    print("[CRON] Fetching latest matches...")
     matches = await provider.fetch_upcoming_matches()
+    print(f"[CRON] Found {len(matches)} T20 matches matching the criteria.")
     conn = db_conn()
     for m in matches:
         existing = conn.execute("SELECT id FROM matches WHERE external_id=?", (m["external_id"],)).fetchone()
@@ -446,7 +439,6 @@ async function openMatch(id) {
   if ((m.status === 'post' || m.status === 'live') && m.post_analysis) {
     const q = m.post_analysis;
     
-    // Highlight the confidence if it's over 80%
     const confColor = q.confidence >= 80 ? '#4ade80' : '#38bdf8'; 
     
     html += `<div class="section" style="border:2px solid ${m.status === 'live' ? '#ef4444' : '#4ade80'}">
@@ -487,7 +479,7 @@ async function openMatch(id) {
   view.innerHTML = html;
 
   if (m.status === 'live') {
-    setTimeout(() => openMatch(id), 15000); // Live refresh every 15s
+    setTimeout(() => openMatch(id), 15000); 
   } else if (m.status !== 'post') {
     setTimeout(() => openMatch(id), 30000);
   }
