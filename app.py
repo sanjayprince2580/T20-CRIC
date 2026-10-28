@@ -1,5 +1,5 @@
 """
-T20 Cricket Match Analysis App - REAL DATA ONLY (No Fallbacks)
+T20 Cricket Match Analysis App - 14 DAY SCHEDULE VERSION
 """
 import asyncio
 import random
@@ -60,11 +60,14 @@ class RealDataProvider:
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                # Fetch live matches (guaranteed to have real data)
-                resp = await client.get(f"{self.base_url}/matches/v1/live", headers=self.headers, timeout=15.0)
+                # Fetch UPCOMING matches instead of just live
+                resp = await client.get(f"{self.base_url}/matches/v1/upcoming", headers=self.headers, timeout=15.0)
                 data = resp.json()
                 
-                print(f"API Status Code: {resp.status_code}")
+                print(f"API Status: {resp.status_code}")
+                
+                now = datetime.utcnow()
+                future_limit = now + timedelta(days=14) # Look 14 days ahead
 
                 for type_match in data.get("typeMatches", []):
                     for series in type_match.get("seriesMatches", []):
@@ -78,14 +81,15 @@ class RealDataProvider:
                             
                             start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
                             
-                            matches.append({
-                                "external_id": str(match_info["matchId"]),
-                                "team1": match_info["team1"]["teamName"],
-                                "team2": match_info["team2"]["teamName"],
-                                "start_time": start_time.isoformat(),
-                                "venue": match_info.get("venueInfo", {}).get("ground", "Unknown Stadium"),
-                                "city": match_info.get("venueInfo", {}).get("city", "Unknown City"),
-                            })
+                            if now - timedelta(hours=6) <= start_time <= future_limit:
+                                matches.append({
+                                    "external_id": str(match_info["matchId"]),
+                                    "team1": match_info["team1"]["teamName"],
+                                    "team2": match_info["team2"]["teamName"],
+                                    "start_time": start_time.isoformat(),
+                                    "venue": match_info.get("venueInfo", {}).get("ground", "Unknown Stadium"),
+                                    "city": match_info.get("venueInfo", {}).get("city", "Unknown City"),
+                                })
             except Exception as e:
                 print(f"API Fetch Error: {e}")
                 
@@ -213,9 +217,9 @@ engine = AnalysisEngine()
 # 4. SCHEDULED JOBS
 # =========================================================
 async def refresh_matches_job():
-    print("[CRON] Fetching live T20 matches...")
+    print("[CRON] Fetching upcoming matches...")
     matches = await provider.fetch_upcoming_matches()
-    print(f"[CRON] Found {len(matches)} real T20 matches.")
+    print(f"[CRON] Found {len(matches)} T20 matches.")
     
     conn = db_conn()
     for m in matches:
@@ -309,8 +313,8 @@ HTML_PAGE = """
 const view = document.getElementById('view');
 async function loadMatches() {
   const res = await fetch('/api/matches'); const matches = await res.json();
-  if (!matches.length) { view.innerHTML = 'No real matches found right now.'; return; }
-  view.innerHTML = '<h1>🏏 Live & Upcoming Matches</h1>' + matches.map(m => `
+  if (!matches.length) { view.innerHTML = 'No matches found. (API Limit might be reached)'; return; }
+  view.innerHTML = '<h1>🏏 Upcoming Matches</h1>' + matches.map(m => `
     <div class="card" onclick="openMatch(${m.id})">
       <div><strong>${m.team1} vs ${m.team2}</strong></div>
       <div style="font-size:0.85rem; color:#94a3b8;">${m.venue}</div>
