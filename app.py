@@ -1,5 +1,5 @@
 """
-T20 Cricket Match Analysis App - PRO MAX (With Region Filter)
+T20 Cricket Match Analysis App - FINAL SCHEDULE VERSION
 """
 import asyncio
 import random
@@ -45,7 +45,7 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (CricAPI)
+# 2. REAL DATA PROVIDER (CricAPI Schedule Endpoint)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
@@ -56,7 +56,8 @@ class RealDataProvider:
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(f"{self.base_url}/currentMatches?apikey={self.api_key}&offset=0", timeout=15.0)
+                # FETCHING THE FULL SCHEDULE (Next 30 days)
+                resp = await client.get(f"{self.base_url}/matches?apikey={self.api_key}&offset=0", timeout=15.0)
                 data = resp.json()
                 
                 if data.get("status") == "success":
@@ -64,7 +65,8 @@ class RealDataProvider:
                     future_limit = now + timedelta(days=30)
 
                     for m in data.get("data", []):
-                        if "T20" not in m.get("matchType", ""):
+                        # Filter for T20 matches
+                        if "t20" not in m.get("matchType", "").lower():
                             continue
                         
                         start_str = m.get("dateTimeGMT", "").replace("Z", "")
@@ -75,16 +77,15 @@ class RealDataProvider:
                         except:
                             continue
 
-                        if now - timedelta(hours=6) <= start_time <= future_limit:
-                            # Try to extract region from venue or name
+                        # Look for matches from 4 hours ago (live) to 30 days ahead
+                        if now - timedelta(hours=4) <= start_time <= future_limit:
                             venue = m.get("venue", "Unknown")
+                            
+                            # Basic region extraction
                             region = "International"
-                            if any(x in venue for x in ["India", "Mumbai", "Chennai", "Kolkata", "Delhi", "Bangalore"]): region = "India"
-                            elif any(x in venue for x in ["Australia", "Sydney", "Melbourne", "Adelaide", "Perth"]): region = "Australia"
-                            elif any(x in venue for x in ["England", "London", "Manchester"]): region = "England"
-                            elif any(x in venue for x in ["South Africa", "Cape Town", "Johannesburg"]): region = "South Africa"
-                            elif any(x in venue for x in ["Pakistan", "Lahore", "Karachi"]): region = "Pakistan"
-                            elif any(x in venue for x in ["West Indies", "Barbados", "Trinidad"]): region = "West Indies"
+                            if any(x in venue for x in ["India", "Mumbai", "Chennai", "Kolkata"]): region = "India"
+                            elif any(x in venue for x in ["Australia", "Sydney", "Melbourne"]): region = "Australia"
+                            elif any(x in venue for x in ["England", "London"]): region = "England"
 
                             matches.append({
                                 "external_id": m["id"],
@@ -95,9 +96,13 @@ class RealDataProvider:
                                 "city": "N/A",
                                 "region": region
                             })
+                else:
+                     print(f"API Error: {data.get('reason')}")
+
             except Exception as e:
                 print(f"API Fetch Error: {e}")
                 
+        # If still no matches (e.g., API limit reached), use Fallback
         if len(matches) == 0:
             print("⚠️ API returned 0 matches. Generating Fallback...")
             matches = self._generate_fallback_matches()
@@ -308,8 +313,8 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     init_db()
     await refresh_matches_job()
-    scheduler.add_job(refresh_matches_job, "interval", minutes=45)
-    scheduler.add_job(check_toss_job, "interval", minutes=5)
+    scheduler.add_job(refresh_matches_job, "interval", minutes=120) # Check every 2 hours to save API limits
+    scheduler.add_job(check_toss_job, "interval", minutes=30) # Check toss every 30 mins
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -369,7 +374,7 @@ async function loadMatches() {
 }
 
 function renderFilters() {
-  const regions = ['All', 'International', 'India', 'Australia', 'England', 'Pakistan', 'South Africa', 'West Indies'];
+  const regions = ['All', 'International', 'India', 'Australia', 'England'];
   let html = '<h1>🏏 Upcoming Matches</h1><div class="filter-bar">';
   regions.forEach(r => {
     html += `<button class="filter-btn ${currentFilter === r ? 'active' : ''}" onclick="setFilter('${r}')">${r}</button>`;
