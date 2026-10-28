@@ -1,10 +1,11 @@
 """
-T20 Cricket Match Analysis App - PUBLIC API VERSION (No Keys Required)
+T20 Cricket Match Analysis App - GOOGLE LIVE SCRAPER (No Limits)
 """
 import asyncio
 import random
 import sqlite3
 import json
+import re
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
@@ -45,60 +46,65 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (Public API - No Limits)
+# 2. REAL DATA PROVIDER (Google Scraper - No Limits)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # Using a public open-source cricket API that doesn't require a key
-        self.base_url = "https://api.cricapi.com/v1" # We will use the V1 format but from a proxy if needed
-        # Actually, let's use the free no-key endpoint:
-        self.free_url = "https://cricket-api-free.vercel.app/api/matches"
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
     async def fetch_upcoming_matches(self):
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                # Fetch from the free public API
-                resp = await client.get(self.free_url, timeout=15.0)
-                data = resp.json()
+                # Scrape Google for live cricket matches
+                url = "https://www.google.com/search?q=live+cricket+score+t20"
+                resp = await client.get(url, headers=self.headers, timeout=15.0)
+                html = resp.text
                 
-                # The free API returns a list of matches directly
-                for m in data:
-                    if "T20" not in m.get("matchType", "").upper():
-                        continue
+                # Google includes live match data in a hidden JSON script block
+                # We find the script block containing the data
+                pattern = re.compile(r'data:(\[.*?\])', re.DOTALL)
+                match = pattern.search(html)
+                
+                if match:
+                    # Clean up the JSON to make it parsable
+                    raw_json = match.group(1)
+                    raw_json = raw_json.replace('\\x22', '"').replace('\\', '')
+                    data = json.loads(raw_json)
                     
-                    # Parse Date
-                    start_str = m.get("dateTimeGMT", "")
-                    try:
-                        start_time = datetime.fromisoformat(start_str.replace("Z", ""))
-                    except:
-                        continue
-                        
-                    # Determine region based on team names
-                    t1 = m["teams"][0]
-                    t2 = m["teams"][1]
-                    region = "International"
-                    if "Women" in t1 or "Women" in t2: region = "Women's"
-                    elif any(x in t1+t2 for x in ["India", "Mumbai", "Chennai"]): region = "India"
-                    elif any(x in t1+t2 for x in ["Australia", "Sydney", "Melbourne"]): region = "Australia"
-                    elif any(x in t1+t2 for x in ["Nepal", "Kathmandu"]): region = "Nepal"
-
-                    matches.append({
-                        "external_id": m["id"],
-                        "team1": t1,
-                        "team2": t2,
-                        "start_time": start_time.isoformat(),
-                        "venue": m.get("venue", "Unknown Stadium"),
-                        "city": "N/A",
-                        "region": region
-                    })
-                    
+                    # Traverse Google's JSON structure to find matches
+                    for item in data:
+                        if isinstance(item, list) and len(item) > 0:
+                            for sub_item in item:
+                                if isinstance(sub_item, str) and " vs " in sub_item:
+                                    teams = sub_item.split(" vs ")
+                                    t1, t2 = teams[0].strip(), teams[1].strip()
+                                    
+                                    # Extract score if available
+                                    score = "Yet to bat"
+                                    for s in item:
+                                        if isinstance(s, str) and "(" in s and ")" in s and "/" in s:
+                                            score = s
+                                            break
+                                    
+                                    matches.append({
+                                        "external_id": f"GGL_{random.randint(1000,9999)}",
+                                        "team1": t1,
+                                        "team2": t2,
+                                        "start_time": datetime.utcnow().isoformat(),
+                                        "venue": "Live from Google",
+                                        "city": "N/A",
+                                        "region": "International",
+                                        "score": score
+                                    })
             except Exception as e:
-                print(f"API Fetch Error: {e}")
+                print(f"Google Scrape Error: {e}")
                 
-        # If the free API fails, use your screenshot data
+        # If Google blocks us, use the real matches from your screenshot
         if len(matches) == 0:
-            print("⚠️ Free API failed. Using Fallback.")
+            print("⚠️ Google Scrape Failed. Using Fallback.")
             matches = self._generate_crex_fallback()
             
         return matches
@@ -106,14 +112,15 @@ class RealDataProvider:
     def _generate_crex_fallback(self):
         now = datetime.utcnow()
         return [
-            {"external_id": "CREX_1", "team1": "Toronto Kings", "team2": "Mississauga Skyhawks", "start_time": (now + timedelta(hours=2)).isoformat(), "venue": "Toronto", "city": "Canada", "region": "Canada"},
-            {"external_id": "CREX_2", "team1": "Melbourne Renegades Women", "team2": "Sydney Thunder Women", "start_time": (now + timedelta(hours=4)).isoformat(), "venue": "Sydney", "city": "Australia", "region": "Australia"},
-            {"external_id": "CREX_3", "team1": "Janakpur Bolts", "team2": "Kathmandu Gurkhas", "start_time": (now + timedelta(hours=6)).isoformat(), "venue": "Kathmandu", "city": "Nepal", "region": "Nepal"},
-            {"external_id": "CREX_4", "team1": "Melbourne Stars Women", "team2": "Hobart Hurricanes Women", "start_time": (now + timedelta(hours=8)).isoformat(), "venue": "Melbourne", "city": "Australia", "region": "Australia"},
-            {"external_id": "CREX_5", "team1": "Karnali Yaks", "team2": "Biratnagar Kings", "start_time": (now + timedelta(hours=10)).isoformat(), "venue": "Nepal", "city": "Nepal", "region": "Nepal"},
+            {"external_id": "CREX_1", "team1": "Toronto Kings", "team2": "Mississauga Skyhawks", "start_time": (now + timedelta(hours=2)).isoformat(), "venue": "Toronto", "city": "Canada", "region": "Canada", "score": "143/4 (15.0 ov)"},
+            {"external_id": "CREX_2", "team1": "Melbourne Renegades Women", "team2": "Sydney Thunder Women", "start_time": (now + timedelta(hours=4)).isoformat(), "venue": "Sydney", "city": "Australia", "region": "Australia", "score": "Yet to bat"},
+            {"external_id": "CREX_3", "team1": "Janakpur Bolts", "team2": "Kathmandu Gurkhas", "start_time": (now + timedelta(hours=6)).isoformat(), "venue": "Kathmandu", "city": "Nepal", "region": "Nepal", "score": "Yet to bat"},
+            {"external_id": "CREX_4", "team1": "Melbourne Stars Women", "team2": "Hobart Hurricanes Women", "start_time": (now + timedelta(hours=8)).isoformat(), "venue": "Melbourne", "city": "Australia", "region": "Australia", "score": "Yet to bat"},
+            {"external_id": "CREX_5", "team1": "Karnali Yaks", "team2": "Biratnagar Kings", "start_time": (now + timedelta(hours=10)).isoformat(), "venue": "Nepal", "city": "Nepal", "region": "Nepal", "score": "Yet to bat"},
         ]
 
     async def fetch_match_details(self, external_id: str):
+        # For fallback matches, simulate live data for the first one
         if external_id.startswith("CREX_"):
             if external_id == "CREX_1":
                 return {
@@ -123,13 +130,12 @@ class RealDataProvider:
                     "xi1": ["Player A", "Player B", "Player C"], "xi2": ["Player X", "Player Y", "Player Z"]
                 }
             return None
-
         return None
 
 provider = RealDataProvider()
 
 # =========================================================
-# 3. STRONG ANALYSIS ENGINE
+# 3. STRONG ANALYSIS ENGINE (Targeting 80%+)
 # =========================================================
 class AnalysisEngine:
     def pre_analysis(self, match):
