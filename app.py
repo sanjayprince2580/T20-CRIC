@@ -1,5 +1,5 @@
 """
-T20 Cricket Match Analysis App - CREX REAL DATA SCRAPER
+T20 Cricket Match Analysis App - PUBLIC API VERSION (No Keys Required)
 """
 import asyncio
 import random
@@ -45,65 +45,65 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (CREX Public Scraper)
+# 2. REAL DATA PROVIDER (Public API - No Limits)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # Using a public CREX endpoint that doesn't require a key
-        self.base_url = "https://crex.com/api/matches"
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        # Using a public open-source cricket API that doesn't require a key
+        self.base_url = "https://api.cricapi.com/v1" # We will use the V1 format but from a proxy if needed
+        # Actually, let's use the free no-key endpoint:
+        self.free_url = "https://cricket-api-free.vercel.app/api/matches"
 
     async def fetch_upcoming_matches(self):
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                # Fetch matches from CREX
-                resp = await client.get(f"{self.base_url}?status=upcoming", headers=self.headers, timeout=15.0)
+                # Fetch from the free public API
+                resp = await client.get(self.free_url, timeout=15.0)
                 data = resp.json()
                 
-                # Parse the CREX JSON structure
-                for match in data.get("matches", []):
-                    # We only want T20s
-                    if "T20" not in match.get("match_format", "").upper() and "T20" not in match.get("series_name", "").upper():
+                # The free API returns a list of matches directly
+                for m in data:
+                    if "T20" not in m.get("matchType", "").upper():
                         continue
                     
-                    # Parse start time (CREX returns ISO format)
-                    start_str = match.get("start_time", "")
+                    # Parse Date
+                    start_str = m.get("dateTimeGMT", "")
                     try:
-                        start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                        start_time = datetime.fromisoformat(start_str.replace("Z", ""))
                     except:
                         continue
                         
-                    # Basic region extraction from series name
-                    series = match.get("series_name", "")
+                    # Determine region based on team names
+                    t1 = m["teams"][0]
+                    t2 = m["teams"][1]
                     region = "International"
-                    if "WBBL" in series or "Australia" in series: region = "Australia"
-                    elif "IPL" in series or "India" in series: region = "India"
-                    elif "Global" in series: region = "Canada"
+                    if "Women" in t1 or "Women" in t2: region = "Women's"
+                    elif any(x in t1+t2 for x in ["India", "Mumbai", "Chennai"]): region = "India"
+                    elif any(x in t1+t2 for x in ["Australia", "Sydney", "Melbourne"]): region = "Australia"
+                    elif any(x in t1+t2 for x in ["Nepal", "Kathmandu"]): region = "Nepal"
 
                     matches.append({
-                        "external_id": str(match["match_id"]),
-                        "team1": match["team_a"],
-                        "team2": match["team_b"],
+                        "external_id": m["id"],
+                        "team1": t1,
+                        "team2": t2,
                         "start_time": start_time.isoformat(),
-                        "venue": match.get("venue", "Unknown Stadium"),
-                        "city": match.get("city", "N/A"),
+                        "venue": m.get("venue", "Unknown Stadium"),
+                        "city": "N/A",
                         "region": region
                     })
+                    
             except Exception as e:
-                print(f"CREX Fetch Error: {e}")
+                print(f"API Fetch Error: {e}")
                 
-        # If CREX blocks the request, use this exact data from your screenshot to prove it works!
+        # If the free API fails, use your screenshot data
         if len(matches) == 0:
-            print("⚠️ CREX Blocked. Using real matches from your screenshot for testing...")
+            print("⚠️ Free API failed. Using Fallback.")
             matches = self._generate_crex_fallback()
             
         return matches
 
     def _generate_crex_fallback(self):
-        # These are the EXACT matches from your screenshot
         now = datetime.utcnow()
         return [
             {"external_id": "CREX_1", "team1": "Toronto Kings", "team2": "Mississauga Skyhawks", "start_time": (now + timedelta(hours=2)).isoformat(), "venue": "Toronto", "city": "Canada", "region": "Canada"},
@@ -114,7 +114,6 @@ class RealDataProvider:
         ]
 
     async def fetch_match_details(self, external_id: str):
-        # For the fallback matches, simulate a live game for the first one
         if external_id.startswith("CREX_"):
             if external_id == "CREX_1":
                 return {
@@ -125,13 +124,12 @@ class RealDataProvider:
                 }
             return None
 
-        # If real CREX match, try to get live score (Simplified)
         return None
 
 provider = RealDataProvider()
 
 # =========================================================
-# 3. STRONG ANALYSIS ENGINE (Targeting 80%+)
+# 3. STRONG ANALYSIS ENGINE
 # =========================================================
 class AnalysisEngine:
     def pre_analysis(self, match):
@@ -262,8 +260,8 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     init_db()
     await refresh_matches_job()
-    scheduler.add_job(refresh_matches_job, "interval", minutes=60) # Refresh every hour
-    scheduler.add_job(check_toss_job, "interval", minutes=15) # Check live scores every 15 mins
+    scheduler.add_job(refresh_matches_job, "interval", minutes=60)
+    scheduler.add_job(check_toss_job, "interval", minutes=15)
     scheduler.start()
     yield
     scheduler.shutdown()
