@@ -1,5 +1,5 @@
 """
-Cricket Match Analysis App - APIFY STANDBY VERSION (All Formats)
+Cricket Match Analysis App - APIFY STANDBY (Final Fix)
 """
 import asyncio
 import random
@@ -50,19 +50,30 @@ def db_conn():
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ PASTE ONLY YOUR APIFY TOKEN HERE ⚠️
+        # ⚠️ ONLY PUT YOUR TOKEN HERE (starts with apify_api_...) ⚠️
         self.apify_token = "apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
         self.base_url = "https://superapis--cricbuzz.apify.actor"
+        
+        # Using the Authorization Header (Recommended by Apify)
+        self.headers = {
+            "Authorization": f"Bearer {self.apify_token}",
+            "Content-Type": "application/json"
+        }
 
     async def fetch_upcoming_matches(self):
         matches = []
-        url = f"{self.base_url}/v1/matches/live?token={self.apify_token}"
+        # URL does NOT contain the token anymore
+        url = f"{self.base_url}/v1/matches/live"
         
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(url, timeout=30.0)
+                resp = await client.get(url, headers=self.headers, timeout=30.0)
                 print(f"Apify Status Code: {resp.status_code}")
                 
+                if resp.status_code != 200:
+                    print(f"Apify Error Response: {resp.text}")
+                    return []
+
                 data = resp.json()
                 
                 for type_match in data.get("typeMatches", []):
@@ -92,11 +103,11 @@ class RealDataProvider:
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        url = f"{self.base_url}/v1/matches/{external_id}/scorecard?token={self.apify_token}"
+        url = f"{self.base_url}/v1/matches/{external_id}/scorecard"
         
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(url, timeout=30.0)
+                resp = await client.get(url, headers=self.headers, timeout=30.0)
                 data = resp.json()
                 
                 toss_info = data.get("tossResults")
