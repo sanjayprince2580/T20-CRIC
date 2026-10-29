@@ -37,7 +37,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-
+self.apify_token = "https://api.apify.com/v2/webhooks?token=apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
 def db_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
