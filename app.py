@@ -50,17 +50,21 @@ def db_conn():
 # =========================================================
 class RealDataProvider:
     def __init__(self):
+        # Use the official client as documented
         self.client = SportScoreClient()
 
     async def fetch_upcoming_matches(self):
         matches = []
         try:
-            # Official method to get live + recent cricket matches
-            # This returns real data, no API key needed.
-            live_matches = self.client.get_matches("cricket", limit=20)
+            # 1. Get the response object
+            response = self.client.get_matches("cricket", limit=20)
             
-            for m in live_matches:
-                # The client returns clean dictionaries
+            # 2. Extract the list of matches from the "data" key
+            # The library returns a dict with a "data" key containing the list [citation:2]
+            raw_matches = response.get("data", [])
+            
+            for m in raw_matches:
+                # 3. Parse the actual match dictionary
                 team1 = m.get("home_team", "Unknown")
                 team2 = m.get("away_team", "Unknown")
                 slug = m.get("slug", "")
@@ -82,7 +86,7 @@ class RealDataProvider:
                     "venue": m.get("venue", "Unknown Stadium"),
                     "city": "International",
                     "region": "International",
-                    "format": "T20" # Default format
+                    "format": "T20"
                 })
         except Exception as e:
             print(f"SportScore Fetch Error: {e}")
@@ -91,9 +95,13 @@ class RealDataProvider:
 
     async def fetch_match_details(self, external_id: str):
         try:
-            # Official method to get details for a specific match
+            # The detail endpoint also returns a dict; extract the data if needed
             data = self.client.get_match_detail("cricket", external_id)
             
+            # Handle potential nesting (if data is under a key)
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+
             live_score = None
             runs = data.get("score", {}).get("home", 0)
             wkts = data.get("score", {}).get("home_wickets", 0)
