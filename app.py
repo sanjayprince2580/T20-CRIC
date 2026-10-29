@@ -1,5 +1,5 @@
 """
-Cricket Match Analysis App - REAL LIVE DATA (RapidAPI Cricbuzz)
+Cricket Match Analysis App - SPORTSCORE VERSION (No API Key Required)
 """
 import asyncio
 import random
@@ -46,84 +46,100 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (RapidAPI Cricbuzz)
+# 2. REAL DATA PROVIDER (SportScore - No Key)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ PASTE YOUR RAPIDAPI KEY HERE ⚠️
-        self.api_key = "8d5bbc7027msh47a3ffc7358593ep1426ljsn030644d3ddcb" 
-        self.base_url = "https://cricbuzz-cricket.p.rapidapi.com"
-        self.headers = {
-            "X-RapidAPI-Key": self.api_key,
-            "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
-        }
+        # The widget endpoint does not require an API key
+        self.base_url = "https://sportscore.com/api/widget/matches/"
 
     async def fetch_upcoming_matches(self):
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                for endpoint in ["live", "upcoming"]:
-                    resp = await client.get(f"{self.base_url}/matches/v1/{endpoint}", headers=self.headers, timeout=15.0)
-                    data = resp.json()
-                    
-                    for type_match in data.get("typeMatches", []):
-                        for series in type_match.get("seriesMatches", []):
-                            series_data = series.get("seriesAdWrapper", {})
-                            if not series_data: continue
-                            
-                            for m in series_data.get("matches", []):
-                                match_info = m.get("matchInfo", {})
-                                if not match_info: continue
-                                
-                                if any(existing["external_id"] == str(match_info["matchId"]) for existing in matches):
-                                    continue
+                # Fetch live/recent cricket matches
+                resp = await client.get(
+                    self.base_url, 
+                    params={"sport": "cricket", "limit": 20}, 
+                    timeout=15.0
+                )
+                
+                if resp.status_code != 200:
+                    print(f"SportScore Error: {resp.status_code}")
+                    return []
 
-                                start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
-                                
-                                matches.append({
-                                    "external_id": str(match_info["matchId"]),
-                                    "team1": match_info["team1"]["teamName"],
-                                    "team2": match_info["team2"]["teamName"],
-                                    "start_time": start_time.isoformat(),
-                                    "venue": match_info.get("venueInfo", {}).get("ground", "Unknown"),
-                                    "city": match_info.get("venueInfo", {}).get("city", "Unknown"),
-                                    "region": "International",
-                                    "format": match_info.get("matchFormat", "Unknown")
-                                })
+                data = resp.json()
+                
+                # The widget endpoint returns a list of matches
+                for m in data:
+                    # SportScore returns team names and a slug
+                    team1 = m.get("home_team", {}).get("name", "Unknown")
+                    team2 = m.get("away_team", {}).get("name", "Unknown")
+                    slug = m.get("slug", "")
+                    
+                    if not slug: continue
+
+                    # Parse start time
+                    start_str = m.get("start_time", "")
+                    try:
+                        start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    except:
+                        start_time = datetime.utcnow()
+
+                    matches.append({
+                        "external_id": slug,
+                        "team1": team1,
+                        "team2": team2,
+                        "start_time": start_time.isoformat(),
+                        "venue": m.get("venue", {}).get("name", "Unknown"),
+                        "city": m.get("venue", {}).get("city", "Unknown"),
+                        "region": "International",
+                        "format": m.get("format", "T20")
+                    })
             except Exception as e:
-                print(f"API Fetch Error: {e}")
+                print(f"SportScore Fetch Error: {e}")
                 
         return matches
 
     async def fetch_match_details(self, external_id: str):
+        # SportScore detail endpoint for a specific match slug
+        url = f"https://sportscore.com/api/widget/match/{external_id}/"
+        
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(f"{self.base_url}/mcenter/v1/{external_id}/hscard", headers=self.headers, timeout=15.0)
+                resp = await client.get(url, timeout=15.0)
                 data = resp.json()
                 
-                toss_info = data.get("tossResults")
-                if toss_info:
-                    score = data.get("score", [])
-                    runs, wkts, overs = 0, 0, 0.0
-                    if score and len(score) > 0:
-                        runs = score[0].get("r", 0)
-                        wkts = score[0].get("w", 0)
-                        overs = score[0].get("o", 0.0)
-                        
+                # Extract live score if available
+                live_score = None
+                runs, wkts, overs = 0, 0, 0.0
+                
+                if data.get("score"):
+                    score_data = data["score"]
+                    runs = score_data.get("runs", 0)
+                    wkts = score_data.get("wickets", 0)
+                    overs = score_data.get("overs", 0.0)
+                    live_score = f"{runs}/{wkts} ({overs} ov)"
+
+                # SportScore provides toss info in the match detail
+                toss_winner = data.get("toss_winner", "Unknown")
+                toss_decision = data.get("toss_decision", "bat")
+                
+                if toss_winner != "Unknown":
                     return {
                         "matchStarted": True,
-                        "matchEnded": data.get("isMatchEnded", False),
-                        "live_score": f"{runs}/{wkts} ({overs} ov)" if runs > 0 else None,
+                        "matchEnded": data.get("status", "") == "finished",
+                        "live_score": live_score,
                         "runs": runs,
                         "wickets": wkts,
                         "overs": overs,
-                        "toss_winner": toss_info.get("tossWinner", "Unknown"),
-                        "toss_decision": toss_info.get("decision", "bat"),
+                        "toss_winner": toss_winner,
+                        "toss_decision": toss_decision,
                         "xi1": [], 
                         "xi2": []
                     }
             except Exception as e:
-                pass
+                print(f"SportScore Details Error: {e}")
         return None
 
 provider = RealDataProvider()
@@ -177,6 +193,9 @@ class AnalysisEngine:
                     if projected_score > 190:
                         base_score[batting_team] += 25
                         reasons.append(f"Massive projected score of {int(projected_score)}.")
+                    elif projected_score < 140:
+                        base_score[bowling_team] += 25
+                        reasons.append(f"Struggling. Projected score only {int(projected_score)}.")
                 
                 if runs < 200 and overs > 5: 
                     target = random.randint(170, 195) 
@@ -197,7 +216,7 @@ class AnalysisEngine:
         winner = t1 if p1 > p2 else t2
         confidence = max(p1, p2)
 
-        if confidence > 70:
+        if confidence > 70 and (details.get("wickets", 0) > 6 or "massive" in "".join(reasons)):
             confidence = max(confidence, 80.5) 
 
         return {
@@ -257,8 +276,8 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     init_db()
     await refresh_matches_job()
-    scheduler.add_job(refresh_matches_job, "interval", minutes=120) 
-    scheduler.add_job(check_toss_job, "interval", minutes=120) 
+    scheduler.add_job(refresh_matches_job, "interval", minutes=60) 
+    scheduler.add_job(check_toss_job, "interval", minutes=60) 
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -302,10 +321,13 @@ HTML_PAGE = """
   .conf { font-size: 3rem; color: #38bdf8; font-weight: 800; text-align: center; }
   .bar { height: 10px; background: #334155; border-radius: 4px; } .bar-fill { height: 100%; background: #4ade80; }
   .live-box { margin-top: 12px; padding: 12px; background: #7f1d1d; border: 1px solid #ef4444; border-radius: 8px; text-align: center; }
+  .attribution { text-align: center; margin-top: 20px; font-size: 0.75rem; color: #64748b; }
+  .attribution a { color: #38bdf8; text-decoration: none; }
 </style>
 </head>
 <body>
 <div id="view" style="max-width:720px; margin:0 auto;">Loading...</div>
+<div class="attribution">Powered by <a href="https://sportscore.com" target="_blank" rel="dofollow">SportScore</a></div>
 <script>
 const view = document.getElementById('view');
 let allMatches = [];
