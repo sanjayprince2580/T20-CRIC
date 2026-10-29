@@ -51,7 +51,7 @@ def db_conn():
 class RealDataProvider:
     def __init__(self):
         # ⚠️ PASTE YOUR APIFY TOKEN HERE ⚠️
-        self.apify_token = "apify_api_bgYeT8EN5GPwvto0MliRKJT0BzLY5d03ljRK"
+        self.apify_token = "https://superapis--cricbuzz.apify.actor?token=apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
         self.base_url = "https://superapis--cricbuzz.apify.actor"
 
     async def fetch_upcoming_matches(self):
