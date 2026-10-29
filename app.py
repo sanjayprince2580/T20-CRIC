@@ -46,7 +46,7 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (SportScore - No Key)
+# 2. REAL DATA PROVIDER (SportScore - Corrected for Flat JSON)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
@@ -70,17 +70,19 @@ class RealDataProvider:
 
                 data = resp.json()
                 
-                # The widget endpoint returns a list of matches
+                # SportScore returns a flat list: [{"home": "Team A", "away": "Team B", ...}]
+                # NOT a nested structure. We must access strings directly.
                 for m in data:
-                    # SportScore returns team names and a slug
-                    team1 = m.get("home_team", {}).get("name", "Unknown")
-                    team2 = m.get("away_team", {}).get("name", "Unknown")
+                    # Direct string access (not .get("name"))
+                    team1 = m.get("home", "Unknown") 
+                    team2 = m.get("away", "Unknown")
                     slug = m.get("slug", "")
                     
-                    if not slug: continue
+                    if not slug or team1 == "Unknown": 
+                        continue
 
                     # Parse start time
-                    start_str = m.get("start_time", "")
+                    start_str = m.get("time", "")
                     try:
                         start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                     except:
@@ -91,10 +93,10 @@ class RealDataProvider:
                         "team1": team1,
                         "team2": team2,
                         "start_time": start_time.isoformat(),
-                        "venue": m.get("venue", {}).get("name", "Unknown"),
-                        "city": m.get("venue", {}).get("city", "Unknown"),
+                        "venue": m.get("venue", "Unknown"),
+                        "city": m.get("competition", "Unknown"),
                         "region": "International",
-                        "format": m.get("format", "T20")
+                        "format": "T20" # SportScore doesn't always provide format
                     })
             except Exception as e:
                 print(f"SportScore Fetch Error: {e}")
@@ -110,18 +112,16 @@ class RealDataProvider:
                 resp = await client.get(url, timeout=15.0)
                 data = resp.json()
                 
-                # Extract live score if available
+                # SportScore uses simple keys, not nested "score" object
                 live_score = None
-                runs, wkts, overs = 0, 0, 0.0
+                runs = data.get("home_score", 0)
+                wkts = data.get("home_wickets", 0)
+                overs = data.get("home_overs", 0.0)
                 
-                if data.get("score"):
-                    score_data = data["score"]
-                    runs = score_data.get("runs", 0)
-                    wkts = score_data.get("wickets", 0)
-                    overs = score_data.get("overs", 0.0)
+                if runs > 0:
                     live_score = f"{runs}/{wkts} ({overs} ov)"
 
-                # SportScore provides toss info in the match detail
+                # SportScore provides toss info directly
                 toss_winner = data.get("toss_winner", "Unknown")
                 toss_decision = data.get("toss_decision", "bat")
                 
@@ -141,8 +141,6 @@ class RealDataProvider:
             except Exception as e:
                 print(f"SportScore Details Error: {e}")
         return None
-
-provider = RealDataProvider()
 
 # =========================================================
 # 3. ANALYSIS ENGINE
