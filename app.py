@@ -1,5 +1,5 @@
 """
-Cricket Match Analysis App - SPORTSCORE VERSION (Fixed)
+Cricket Match Analysis App - Official SportScore API (No Key Required)
 """
 import asyncio
 import random
@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sportscore import SportScoreClient # Official client
 
 # =========================================================
 # 1. DATABASE LAYER
@@ -46,91 +46,82 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (SportScore - No Key)
+# 2. REAL DATA PROVIDER (Official SportScore Client)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        self.base_url = "https://sportscore.com/api/widget/matches/"
+        self.client = SportScoreClient()
 
     async def fetch_upcoming_matches(self):
         matches = []
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.get(self.base_url, params={"sport": "cricket", "limit": 20}, timeout=15.0)
+        try:
+            # Official method to get live + recent cricket matches
+            # This returns real data, no API key needed.
+            live_matches = self.client.get_matches("cricket", limit=20)
+            
+            for m in live_matches:
+                # The client returns clean dictionaries
+                team1 = m.get("home_team", "Unknown")
+                team2 = m.get("away_team", "Unknown")
+                slug = m.get("slug", "")
                 
-                if resp.status_code != 200:
-                    print(f"SportScore Error: {resp.status_code}")
-                    return []
+                if not slug or team1 == "Unknown": 
+                    continue
 
-                data = resp.json()
-                
-                for m in data:
-                    # SportScore returns strings directly for home/away
-                    team1 = m.get("home", "Unknown") 
-                    team2 = m.get("away", "Unknown")
-                    slug = m.get("slug", "")
-                    
-                    if not slug or team1 == "Unknown": 
-                        continue
+                start_str = m.get("start_time", "")
+                try:
+                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                except:
+                    start_time = datetime.utcnow()
 
-                    start_str = m.get("time", "")
-                    try:
-                        start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                    except:
-                        start_time = datetime.utcnow()
-
-                    matches.append({
-                        "external_id": slug,
-                        "team1": team1,
-                        "team2": team2,
-                        "start_time": start_time.isoformat(),
-                        "venue": m.get("venue", "Unknown"),
-                        "city": m.get("competition", "Unknown"),
-                        "region": "International",
-                        "format": "T20"
-                    })
-            except Exception as e:
-                print(f"SportScore Fetch Error: {e}")
-                
+                matches.append({
+                    "external_id": slug,
+                    "team1": team1,
+                    "team2": team2,
+                    "start_time": start_time.isoformat(),
+                    "venue": m.get("venue", "Unknown Stadium"),
+                    "city": "International",
+                    "region": "International",
+                    "format": "T20" # Default format
+                })
+        except Exception as e:
+            print(f"SportScore Fetch Error: {e}")
+            
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        url = f"https://sportscore.com/api/widget/match/{external_id}/"
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.get(url, timeout=15.0)
-                data = resp.json()
-                
-                live_score = None
-                runs = data.get("home_score", 0)
-                wkts = data.get("home_wickets", 0)
-                overs = data.get("home_overs", 0.0)
-                
-                if runs > 0:
-                    live_score = f"{runs}/{wkts} ({overs} ov)"
+        try:
+            # Official method to get details for a specific match
+            data = self.client.get_match_detail("cricket", external_id)
+            
+            live_score = None
+            runs = data.get("score", {}).get("home", 0)
+            wkts = data.get("score", {}).get("home_wickets", 0)
+            overs = data.get("score", {}).get("home_overs", 0.0)
+            
+            if runs > 0:
+                live_score = f"{runs}/{wkts} ({overs} ov)"
 
-                toss_winner = data.get("toss_winner", "Unknown")
-                toss_decision = data.get("toss_decision", "bat")
-                
-                if toss_winner != "Unknown":
-                    return {
-                        "matchStarted": True,
-                        "matchEnded": data.get("status", "") == "finished",
-                        "live_score": live_score,
-                        "runs": runs,
-                        "wickets": wkts,
-                        "overs": overs,
-                        "toss_winner": toss_winner,
-                        "toss_decision": toss_decision,
-                        "xi1": [], 
-                        "xi2": []
-                    }
-            except Exception as e:
-                print(f"SportScore Details Error: {e}")
+            toss_winner = data.get("toss_winner", "Unknown")
+            toss_decision = data.get("toss_decision", "bat")
+            
+            if toss_winner != "Unknown":
+                return {
+                    "matchStarted": True,
+                    "matchEnded": data.get("status", "") == "finished",
+                    "live_score": live_score,
+                    "runs": runs,
+                    "wickets": wkts,
+                    "overs": overs,
+                    "toss_winner": toss_winner,
+                    "toss_decision": toss_decision,
+                    "xi1": [], 
+                    "xi2": []
+                }
+        except Exception as e:
+            print(f"SportScore Details Error: {e}")
         return None
 
-# ⚠️ THIS LINE WAS MISSING IN YOUR PREVIOUS DEPLOY
 provider = RealDataProvider()
 
 # =========================================================
@@ -329,7 +320,7 @@ async function loadMatches() {
 }
 
 function renderFilters() {
-  const regions = ['All', 'International', 'Australia', 'India', 'England', 'South Africa'];
+  const regions = ['All', 'International'];
   let html = '<h1>🏏 All Matches</h1><div class="filter-bar">';
   regions.forEach(r => {
     html += `<button class="filter-btn ${currentFilter === r ? 'active' : ''}" onclick="setFilter('${r}')">${r}</button>`;
