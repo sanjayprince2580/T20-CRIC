@@ -1,5 +1,5 @@
 """
-Cricket Match Analysis App - SPORTSCORE VERSION (No API Key Required)
+Cricket Match Analysis App - SPORTSCORE VERSION (Fixed)
 """
 import asyncio
 import random
@@ -46,23 +46,17 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (SportScore - Corrected for Flat JSON)
+# 2. REAL DATA PROVIDER (SportScore - No Key)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # The widget endpoint does not require an API key
         self.base_url = "https://sportscore.com/api/widget/matches/"
 
     async def fetch_upcoming_matches(self):
         matches = []
         async with httpx.AsyncClient() as client:
             try:
-                # Fetch live/recent cricket matches
-                resp = await client.get(
-                    self.base_url, 
-                    params={"sport": "cricket", "limit": 20}, 
-                    timeout=15.0
-                )
+                resp = await client.get(self.base_url, params={"sport": "cricket", "limit": 20}, timeout=15.0)
                 
                 if resp.status_code != 200:
                     print(f"SportScore Error: {resp.status_code}")
@@ -70,10 +64,8 @@ class RealDataProvider:
 
                 data = resp.json()
                 
-                # SportScore returns a flat list: [{"home": "Team A", "away": "Team B", ...}]
-                # NOT a nested structure. We must access strings directly.
                 for m in data:
-                    # Direct string access (not .get("name"))
+                    # SportScore returns strings directly for home/away
                     team1 = m.get("home", "Unknown") 
                     team2 = m.get("away", "Unknown")
                     slug = m.get("slug", "")
@@ -81,7 +73,6 @@ class RealDataProvider:
                     if not slug or team1 == "Unknown": 
                         continue
 
-                    # Parse start time
                     start_str = m.get("time", "")
                     try:
                         start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
@@ -96,7 +87,7 @@ class RealDataProvider:
                         "venue": m.get("venue", "Unknown"),
                         "city": m.get("competition", "Unknown"),
                         "region": "International",
-                        "format": "T20" # SportScore doesn't always provide format
+                        "format": "T20"
                     })
             except Exception as e:
                 print(f"SportScore Fetch Error: {e}")
@@ -104,7 +95,6 @@ class RealDataProvider:
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        # SportScore detail endpoint for a specific match slug
         url = f"https://sportscore.com/api/widget/match/{external_id}/"
         
         async with httpx.AsyncClient() as client:
@@ -112,7 +102,6 @@ class RealDataProvider:
                 resp = await client.get(url, timeout=15.0)
                 data = resp.json()
                 
-                # SportScore uses simple keys, not nested "score" object
                 live_score = None
                 runs = data.get("home_score", 0)
                 wkts = data.get("home_wickets", 0)
@@ -121,7 +110,6 @@ class RealDataProvider:
                 if runs > 0:
                     live_score = f"{runs}/{wkts} ({overs} ov)"
 
-                # SportScore provides toss info directly
                 toss_winner = data.get("toss_winner", "Unknown")
                 toss_decision = data.get("toss_decision", "bat")
                 
@@ -141,6 +129,9 @@ class RealDataProvider:
             except Exception as e:
                 print(f"SportScore Details Error: {e}")
         return None
+
+# ⚠️ THIS LINE WAS MISSING IN YOUR PREVIOUS DEPLOY
+provider = RealDataProvider()
 
 # =========================================================
 # 3. ANALYSIS ENGINE
