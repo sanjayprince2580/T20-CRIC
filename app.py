@@ -45,21 +45,23 @@ def db_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+# =========================================================
+# 2. REAL DATA PROVIDER (Apify Standby)
+# =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ ONLY PUT YOUR TOKEN HERE (starts with apify_api_...) ⚠️
+        # ⚠️ PASTE ONLY YOUR APIFY TOKEN HERE ⚠️
         self.apify_token = "apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
         self.base_url = "https://superapis--cricbuzz.apify.actor"
 
     async def fetch_upcoming_matches(self):
         matches = []
-        # Correctly constructs the URL
         url = f"{self.base_url}/v1/matches/live?token={self.apify_token}"
         
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(url, timeout=30.0)
-                print(f"Apify Status Code: {resp.status_code}") # THIS WILL SHOW IN RENDER LOGS
+                print(f"Apify Status Code: {resp.status_code}")
                 
                 data = resp.json()
                 
@@ -90,38 +92,12 @@ class RealDataProvider:
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        # Correctly constructs the URL for scorecards
         url = f"{self.base_url}/v1/matches/{external_id}/scorecard?token={self.apify_token}"
         
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(url, timeout=30.0)
                 data = resp.json()
-                
-                toss_info = data.get("tossResults")
-                if toss_info:
-                    score = data.get("score", [])
-                    runs, wkts, overs = 0, 0, 0.0
-                    if score and len(score) > 0:
-                        runs = score[0].get("r", 0)
-                        wkts = score[0].get("w", 0)
-                        overs = score[0].get("o", 0.0)
-                        
-                    return {
-                        "matchStarted": True,
-                        "matchEnded": data.get("isMatchEnded", False),
-                        "live_score": f"{runs}/{wkts} ({overs} ov)" if runs > 0 else None,
-                        "runs": runs,
-                        "wickets": wkts,
-                        "overs": overs,
-                        "toss_winner": toss_info.get("tossWinner", "Unknown"),
-                        "toss_decision": toss_info.get("decision", "bat"),
-                        "xi1": [], 
-                        "xi2": []
-                    }
-            except Exception as e:
-                print(f"Apify Details Error: {e}")
-        return None
                 
                 toss_info = data.get("tossResults")
                 if toss_info:
