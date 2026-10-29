@@ -1,5 +1,5 @@
 """
-Cricket Match Analysis App - APIFY STANDBY (Final Fix)
+Cricket Match Analysis App - RapidAPI Cricbuzz (All Formats)
 """
 import asyncio
 import random
@@ -46,70 +46,64 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (Apify Standby)
+# 2. REAL DATA PROVIDER (RapidAPI)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # ⚠️ ONLY PUT YOUR TOKEN HERE (starts with apify_api_...) ⚠️
-        self.apify_token = "apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
-        self.base_url = "https://superapis--cricbuzz.apify.actor"
-        
-        # Using the Authorization Header (Recommended by Apify)
+        # ⚠️ PASTE YOUR RAPIDAPI KEY HERE ⚠️
+        self.api_key = "apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s"
+        self.base_url = "https://cricbuzz-cricket.p.rapidapi.com"
         self.headers = {
-            "Authorization": f"Bearer {self.apify_token}",
-            "Content-Type": "application/json"
+            "X-RapidAPI-Key": self.api_key,
+            "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
         }
 
     async def fetch_upcoming_matches(self):
         matches = []
-        # URL does NOT contain the token anymore
-        url = f"{self.base_url}/v1/matches/live"
-        
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(url, headers=self.headers, timeout=30.0)
-                print(f"Apify Status Code: {resp.status_code}")
-                
-                if resp.status_code != 200:
-                    print(f"Apify Error Response: {resp.text}")
-                    return []
-
-                data = resp.json()
-                
-                for type_match in data.get("typeMatches", []):
-                    for series in type_match.get("seriesMatches", []):
-                        series_data = series.get("seriesAdWrapper", {})
-                        if not series_data: continue
-                        
-                        for m in series_data.get("matches", []):
-                            match_info = m.get("matchInfo", {})
-                            if not match_info: continue
-
-                            start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
+                # Fetch LIVE and UPCOMING matches
+                for endpoint in ["live", "upcoming"]:
+                    resp = await client.get(f"{self.base_url}/matches/v1/{endpoint}", headers=self.headers, timeout=15.0)
+                    data = resp.json()
+                    
+                    for type_match in data.get("typeMatches", []):
+                        for series in type_match.get("seriesMatches", []):
+                            series_data = series.get("seriesAdWrapper", {})
+                            if not series_data: continue
                             
-                            matches.append({
-                                "external_id": str(match_info["matchId"]),
-                                "team1": match_info["team1"]["teamName"],
-                                "team2": match_info["team2"]["teamName"],
-                                "start_time": start_time.isoformat(),
-                                "venue": match_info.get("venueInfo", {}).get("ground", "Unknown"),
-                                "city": match_info.get("venueInfo", {}).get("city", "Unknown"),
-                                "region": "International",
-                                "format": match_info.get("matchFormat", "Unknown")
-                            })
+                            for m in series_data.get("matches", []):
+                                match_info = m.get("matchInfo", {})
+                                if not match_info: continue
+                                
+                                # Remove duplicate matches
+                                if any(existing["external_id"] == str(match_info["matchId"]) for existing in matches):
+                                    continue
+
+                                start_time = datetime.utcfromtimestamp(match_info["startDate"] / 1000.0)
+                                
+                                matches.append({
+                                    "external_id": str(match_info["matchId"]),
+                                    "team1": match_info["team1"]["teamName"],
+                                    "team2": match_info["team2"]["teamName"],
+                                    "start_time": start_time.isoformat(),
+                                    "venue": match_info.get("venueInfo", {}).get("ground", "Unknown"),
+                                    "city": match_info.get("venueInfo", {}).get("city", "Unknown"),
+                                    "region": "International",
+                                    "format": match_info.get("matchFormat", "Unknown")
+                                })
             except Exception as e:
-                print(f"Apify Fetch Error: {e}")
+                print(f"API Fetch Error: {e}")
                 
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        url = f"{self.base_url}/v1/matches/{external_id}/scorecard"
-        
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(url, headers=self.headers, timeout=30.0)
+                resp = await client.get(f"{self.base_url}/mcenter/v1/{external_id}/hscard", headers=self.headers, timeout=15.0)
                 data = resp.json()
                 
+                # Look for toss info
                 toss_info = data.get("tossResults")
                 if toss_info:
                     score = data.get("score", [])
@@ -132,7 +126,7 @@ class RealDataProvider:
                         "xi2": []
                     }
             except Exception as e:
-                print(f"Apify Details Error: {e}")
+                pass
         return None
 
 provider = RealDataProvider()
