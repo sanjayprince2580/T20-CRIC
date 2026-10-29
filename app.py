@@ -1,5 +1,5 @@
 """
-T20 Cricket Match Analysis App - APIFY VERSION (All Matches, No Limits)
+Cricket Match Analysis App - APIFY STANDBY VERSION (All Formats)
 """
 import asyncio
 import random
@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apify_client import ApifyClient
 
 # =========================================================
 # 1. DATABASE LAYER
@@ -46,42 +46,25 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (Apify)
+# 2. REAL DATA PROVIDER (Apify Standby)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
         # ⚠️ PASTE YOUR APIFY TOKEN HERE ⚠️
-        self.apify_token = "https://api.apify.com/v2/webhooks?token=apify_api_xSfcYmyrvLM5wlJUG6sUOgpPn9KAoL1igA7s" 
-        self.client = ApifyClient(self.apify_token)
-        self.actor_id = "superapis/cricbuzz"
+        self.apify_token = "PASTE_YOUR_APIFY_TOKEN_HERE"
+        self.base_url = "https://superapis--cricbuzz.apify.actor"
 
     async def fetch_upcoming_matches(self):
         matches = []
-        try:
-            run_input = {"endpoint": "matches", "type": "live"}
-            loop = asyncio.get_event_loop()
-            
-            # Run Apify Actor
-            run = await loop.run_in_executor(
-                None, 
-                lambda: self.client.actor(self.actor_id).call(run_input=run_input)
-            )
-
-            if not run:
-                print("Apify run failed.")
-                return []
-
-            # Fetch results
-            dataset_items = await loop.run_in_executor(
-                None,
-                lambda: self.client.dataset(run["defaultDatasetId"]).list_items().items
-            )
-
-            for item in dataset_items:
-                # The actor might return the match list wrapped in a 'typeMatches' array
-                type_matches = item.get("typeMatches", [])
-                for t_match in type_matches:
-                    for series in t_match.get("seriesMatches", []):
+        url = f"{self.base_url}/v1/matches/live?token={self.apify_token}"
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(url, timeout=30.0)
+                data = resp.json()
+                
+                for type_match in data.get("typeMatches", []):
+                    for series in type_match.get("seriesMatches", []):
                         series_data = series.get("seriesAdWrapper", {})
                         if not series_data: continue
                         
@@ -101,31 +84,20 @@ class RealDataProvider:
                                 "region": "International",
                                 "format": match_info.get("matchFormat", "Unknown")
                             })
-        except Exception as e:
-            print(f"Apify Fetch Error: {e}")
-            
+            except Exception as e:
+                print(f"Apify Fetch Error: {e}")
+                
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        try:
-            run_input = {"endpoint": "scorecard", "matchId": external_id}
-            loop = asyncio.get_event_loop()
-            
-            run = await loop.run_in_executor(
-                None, 
-                lambda: self.client.actor(self.actor_id).call(run_input=run_input)
-            )
-            
-            if not run: return None
-            
-            dataset_items = await loop.run_in_executor(
-                None,
-                lambda: self.client.dataset(run["defaultDatasetId"]).list_items().items
-            )
-            
-            if dataset_items:
-                data = dataset_items[0]
-                toss_info = data.get("tossResults") 
+        url = f"{self.base_url}/v1/matches/{external_id}/scorecard?token={self.apify_token}"
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(url, timeout=30.0)
+                data = resp.json()
+                
+                toss_info = data.get("tossResults")
                 if toss_info:
                     score = data.get("score", [])
                     runs, wkts, overs = 0, 0, 0.0
@@ -146,8 +118,8 @@ class RealDataProvider:
                         "xi1": [], 
                         "xi2": []
                     }
-        except Exception as e:
-            print(f"Apify Details Error: {e}")
+            except Exception as e:
+                print(f"Apify Details Error: {e}")
         return None
 
 provider = RealDataProvider()
@@ -290,8 +262,7 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown()
 
-# THIS IS WHERE THE ERROR WAS FIXED. 'app' is now properly defined.
-app = FastAPI(lifespan=lifespan, title="T20 Analyzer")
+app = FastAPI(lifespan=lifespan, title="Match Analyzer")
 
 @app.get("/api/matches")
 async def list_matches():
