@@ -2,4 +2,6 @@ fastapi
 uvicorn
 httpx
 apscheduler
-sportscore
+pandas
+scikit-learn
+xgboost
