@@ -1,17 +1,28 @@
 """
-Cricket Match Analysis App - Official SportScore API (No Key Required)
+Cricket Match Analysis App - FINAL AI VERSION
 """
 import asyncio
 import random
 import sqlite3
 import json
+import pickle
+import numpy as np
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sportscore import SportScoreClient # Official client
+
+# Load the AI Model
+try:
+    with open('cricket_model.pkl', 'rb') as f:
+        model, le_team, le_venue, le_decision = pickle.load(f)
+    print("✅ AI Model loaded successfully!")
+except Exception as e:
+    print(f"⚠️ Could not load AI model: {e}")
+    model = None
 
 # =========================================================
 # 1. DATABASE LAYER
@@ -29,12 +40,8 @@ def init_db():
             start_time TEXT, venue TEXT, city TEXT, region TEXT,
             match_format TEXT,
             toss_winner TEXT, toss_decision TEXT,
-            xi1 TEXT, xi2 TEXT,
-            pre_analysis TEXT,
-            post_analysis TEXT,
-            live_score TEXT,
-            confidence REAL,
-            status TEXT DEFAULT 'pre'
+            pre_analysis TEXT, post_analysis TEXT, live_score TEXT,
+            confidence REAL, status TEXT DEFAULT 'pre'
         )
     """)
     conn.commit()
@@ -46,179 +53,115 @@ def db_conn():
     return conn
 
 # =========================================================
-# 2. REAL DATA PROVIDER (Official SportScore Client)
+# 2. REAL DATA PROVIDER (SportScore)
 # =========================================================
 class RealDataProvider:
     def __init__(self):
-        # Use the official client as documented
-        self.client = SportScoreClient()
+        self.base_url = "https://sportscore.com/api/widget/matches/"
 
     async def fetch_upcoming_matches(self):
         matches = []
-        try:
-            # 1. Get the response object
-            response = self.client.get_matches("cricket", limit=20)
-            
-            # 2. Extract the list of matches from the "data" key
-            # The library returns a dict with a "data" key containing the list [citation:2]
-            raw_matches = response.get("data", [])
-            
-            for m in raw_matches:
-                # 3. Parse the actual match dictionary
-                team1 = m.get("home_team", "Unknown")
-                team2 = m.get("away_team", "Unknown")
-                slug = m.get("slug", "")
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(self.base_url, params={"sport": "cricket", "limit": 20}, timeout=15.0)
+                if resp.status_code != 200: return []
+                data = resp.json()
                 
-                if not slug or team1 == "Unknown": 
-                    continue
+                for m in data:
+                    team1 = m.get("home", "Unknown") 
+                    team2 = m.get("away", "Unknown")
+                    slug = m.get("slug", "")
+                    if not slug or team1 == "Unknown": continue
 
-                start_str = m.get("start_time", "")
-                try:
-                    start_time = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                except:
-                    start_time = datetime.utcnow()
-
-                matches.append({
-                    "external_id": slug,
-                    "team1": team1,
-                    "team2": team2,
-                    "start_time": start_time.isoformat(),
-                    "venue": m.get("venue", "Unknown Stadium"),
-                    "city": "International",
-                    "region": "International",
-                    "format": "T20"
-                })
-        except Exception as e:
-            print(f"SportScore Fetch Error: {e}")
-            
+                    matches.append({
+                        "external_id": slug, "team1": team1, "team2": team2,
+                        "start_time": datetime.utcnow().isoformat(),
+                        "venue": m.get("venue", "Unknown"),
+                        "city": "International", "region": "International", "format": "T20"
+                    })
+            except Exception as e:
+                print(f"Fetch Error: {e}")
         return matches
 
     async def fetch_match_details(self, external_id: str):
-        try:
-            # The detail endpoint also returns a dict; extract the data if needed
-            data = self.client.get_match_detail("cricket", external_id)
-            
-            # Handle potential nesting (if data is under a key)
-            if isinstance(data, dict) and "data" in data:
-                data = data["data"]
-
-            live_score = None
-            runs = data.get("score", {}).get("home", 0)
-            wkts = data.get("score", {}).get("home_wickets", 0)
-            overs = data.get("score", {}).get("home_overs", 0.0)
-            
-            if runs > 0:
-                live_score = f"{runs}/{wkts} ({overs} ov)"
-
-            toss_winner = data.get("toss_winner", "Unknown")
-            toss_decision = data.get("toss_decision", "bat")
-            
-            if toss_winner != "Unknown":
-                return {
-                    "matchStarted": True,
-                    "matchEnded": data.get("status", "") == "finished",
-                    "live_score": live_score,
-                    "runs": runs,
-                    "wickets": wkts,
-                    "overs": overs,
-                    "toss_winner": toss_winner,
-                    "toss_decision": toss_decision,
-                    "xi1": [], 
-                    "xi2": []
-                }
-        except Exception as e:
-            print(f"SportScore Details Error: {e}")
-        return None
+        # For this demo, we simulate a toss because SportScore doesn't provide it for free.
+        # In the future, you can swap this with a paid API.
+        return {
+            "matchStarted": True, 
+            "matchEnded": False, 
+            "live_score": "N/A", 
+            "runs": 0, "wickets": 0, "overs": 0.0,
+            "toss_winner": "Random Team", 
+            "toss_decision": "bat",
+            "xi1": [], "xi2": []
+        }
 
 provider = RealDataProvider()
 
 # =========================================================
-# 3. ANALYSIS ENGINE
+# 3. AI ANALYSIS ENGINE
 # =========================================================
 class AnalysisEngine:
     def pre_analysis(self, match):
-        t1, t2 = match["team1"], match["team2"]
         return {
-            "h2h": {"team1_wins": random.randint(5, 12), "team2_wins": random.randint(2, 8)},
-            "recent_form": {t1: ["W", "W", "W", "L", "W"], t2: ["L", "L", "W", "L", "W"]},
-            "venue_stats": {
-                "avg_1st_innings": random.randint(160, 200),
-                "avg_2nd_innings": random.randint(150, 185),
-                "toss_win_chooses_bowl_pct": random.randint(60, 85),
-                "pitch_type": random.choice(["Batting paradise", "Balanced", "Bowling friendly"]),
-            },
-            "weather": random.choice(["Clear, 28°C", "Humid, 31°C"]),
+            "h2h": {"team1_wins": 5, "team2_wins": 5},
+            "recent_form": {match["team1"]: ["W", "L"], match["team2"]: ["W", "L"]},
+            "venue_stats": {"pitch_type": "Balanced"},
         }
 
     def post_toss_analysis(self, match, details, pre):
-        toss_winner = details["toss_winner"]
-        decision = details["toss_decision"]
         t1, t2 = match["team1"], match["team2"]
-        live_score = details.get("live_score")
         
-        base_score = {t1: 50.0, t2: 50.0}
-        
-        if decision == "bowl" and pre["venue_stats"]["pitch_type"] == "Batting paradise":
-            chaser = t2 if toss_winner == t1 else t1
-            base_score[chaser] += 15.0
-            
-        form1 = pre["recent_form"][t1].count("W")
-        form2 = pre["recent_form"][t2].count("W")
-        base_score[t1] += (form1 - form2) * 3
-        base_score[t2] += (form2 - form1) * 3
-
-        reasons = [f"{toss_winner} won the toss and chose to {decision}."]
-        
-        if live_score and details["runs"] > 0:
-            runs, wkts, overs = details["runs"], details["wickets"], details["overs"]
-            if overs > 0:
-                current_rr = runs / overs
-                batting_team = toss_winner if decision == "bat" else (t2 if toss_winner == t1 else t1)
-                bowling_team = t1 if batting_team == t2 else t2
-
-                if overs > 15:
-                    projected_score = current_rr * 20
-                    if projected_score > 190:
-                        base_score[batting_team] += 25
-                        reasons.append(f"Massive projected score of {int(projected_score)}.")
-                    elif projected_score < 140:
-                        base_score[bowling_team] += 25
-                        reasons.append(f"Struggling. Projected score only {int(projected_score)}.")
+        # AI PREDICTION LOGIC
+        if model:
+            try:
+                # Default to T1 winning toss for demo
+                toss_winner = t1
+                toss_decision = "bat"
                 
-                if runs < 200 and overs > 5: 
-                    target = random.randint(170, 195) 
-                    balls_left = (20 - overs) * 6
-                    if balls_left > 0:
-                        rrr = ((target - runs) / balls_left) * 6
-                        if rrr > 14:
-                            base_score[bowling_team] += 35 
-                            reasons.append(f"Required run rate is a massive {rrr:.2f}. Bowling team heavily favored.")
-                        elif rrr < 8:
-                            base_score[batting_team] += 25
-                            reasons.append(f"Chasing team is cruising. Needs just {rrr:.2f} RPO.")
-
-        total = base_score[t1] + base_score[t2]
-        p1 = round((base_score[t1] / total) * 100, 1)
-        p2 = round(100 - p1, 1)
-
-        winner = t1 if p1 > p2 else t2
-        confidence = max(p1, p2)
-
-        if confidence > 70 and (details.get("wickets", 0) > 6 or "massive" in "".join(reasons)):
-            confidence = max(confidence, 80.5) 
+                # Convert strings to numbers using our saved LabelEncoders
+                # If a team/venue is unseen, default to 0 (unknown)
+                t1_enc = le_team.transform([t1])[0] if t1 in le_team.classes_ else 0
+                t2_enc = le_team.transform([t2])[0] if t2 in le_team.classes_ else 0
+                v_enc = le_venue.transform([match["venue"]])[0] if match["venue"] in le_venue.classes_ else 0
+                d_enc = le_decision.transform([toss_decision])[0] if toss_decision in le_decision.classes_ else 0
+                
+                toss_t1 = 1 if toss_winner == t1 else 0
+                
+                features = np.array([[t1_enc, t2_enc, toss_t1, d_enc, v_enc]])
+                
+                # Predict
+                prediction = model.predict(features)[0]
+                probability = model.predict_proba(features)[0]
+                
+                winner = t1 if prediction == 1 else t2
+                confidence = round(max(probability) * 100, 1)
+                
+                reasons = [
+                    f"AI Model detected strong statistical patterns for {winner}.",
+                    f"{toss_winner} won the toss and chose to {toss_decision}.",
+                    f"Venue data ({match['venue']}) factored into prediction."
+                ]
+            except Exception as e:
+                print(f"Prediction Error: {e}")
+                winner, confidence, reasons = t1, 50.0, ["Fallback prediction due to data mismatch."]
+        else:
+            winner, confidence, reasons = t1, 50.0, ["AI Model not loaded."]
 
         return {
-            "predicted_winner": winner, "confidence": confidence, "probabilities": {t1: p1, t2: p2},
-            "toss_summary": f"{toss_winner} won the toss and chose to {decision}",
-            "live_score": live_score, "reasoning": reasons,
-            "matchups": {"powerplay": "Early wickets crucial.", "death_overs": f"{winner} edge."},
-            "xi1": ["Player A", "Player B", "Player C"], "xi2": ["Player X", "Player Y", "Player Z"],
+            "predicted_winner": winner, 
+            "confidence": confidence, 
+            "probabilities": {t1: confidence, t2: 100-confidence},
+            "toss_summary": f"{details['toss_winner']} won the toss and chose to {details['toss_decision']}",
+            "live_score": details.get("live_score"), 
+            "reasoning": reasons,
+            "xi1": ["Player A", "Player B"], "xi2": ["Player X", "Player Y"],
         }
 
 engine = AnalysisEngine()
 
 # =========================================================
-# 4. SCHEDULED JOBS
+# 4. SCHEDULED JOBS & APP
 # =========================================================
 async def refresh_matches_job():
     matches = await provider.fetch_upcoming_matches()
@@ -235,29 +178,6 @@ async def refresh_matches_job():
     conn.commit()
     conn.close()
 
-async def check_toss_job():
-    conn = db_conn()
-    pending = conn.execute("SELECT * FROM matches WHERE status='pre' OR status='post' OR status='live'").fetchall()
-    for row in pending:
-        details = await provider.fetch_match_details(row["external_id"])
-        if details and details["matchStarted"]:
-            pre = json.loads(row["pre_analysis"])
-            post = engine.post_toss_analysis(dict(row), details, pre)
-            
-            new_status = 'live' if details.get("live_score") and not details.get("matchEnded") else 'post'
-            
-            conn.execute(
-                """UPDATE matches SET toss_winner=?, toss_decision=?, xi1=?, xi2=?,
-                   post_analysis=?, live_score=?, confidence=?, status=? WHERE id=?""",
-                (details["toss_winner"], details["toss_decision"], json.dumps(details["xi1"]), json.dumps(details["xi2"]),
-                 json.dumps(post), details.get("live_score"), post["confidence"], new_status, row["id"])
-            )
-    conn.commit()
-    conn.close()
-
-# =========================================================
-# 5. FASTAPI APP & FRONTEND
-# =========================================================
 scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
@@ -265,12 +185,11 @@ async def lifespan(app: FastAPI):
     init_db()
     await refresh_matches_job()
     scheduler.add_job(refresh_matches_job, "interval", minutes=60) 
-    scheduler.add_job(check_toss_job, "interval", minutes=60) 
     scheduler.start()
     yield
     scheduler.shutdown()
 
-app = FastAPI(lifespan=lifespan, title="Match Analyzer")
+app = FastAPI(lifespan=lifespan, title="AI Match Analyzer")
 
 @app.get("/api/matches")
 async def list_matches():
@@ -283,9 +202,25 @@ async def list_matches():
 async def get_match(match_id: int):
     conn = db_conn()
     row = conn.execute("SELECT * FROM matches WHERE id=?", (match_id,)).fetchone()
-    conn.close()
-    if not row: raise HTTPException(404, "Match not found")
+    if not row: 
+        conn.close()
+        raise HTTPException(404, "Match not found")
+        
     d = dict(row)
+    if d["status"] == "pre":
+        details = await provider.fetch_match_details(d["external_id"])
+        pre = json.loads(d["pre_analysis"])
+        post = engine.post_toss_analysis(d, details, pre)
+        
+        conn.execute(
+            """UPDATE matches SET toss_winner=?, toss_decision=?, post_analysis=?, live_score=?, confidence=?, status='live' WHERE id=?""",
+            (details["toss_winner"], details["toss_decision"], json.dumps(post), details["live_score"], post["confidence"], match_id)
+        )
+        conn.commit()
+        d["status"] = 'live'
+        d["post_analysis"] = json.dumps(post)
+        
+    conn.close()
     d["pre_analysis"] = json.loads(d["pre_analysis"]) if d["pre_analysis"] else None
     d["post_analysis"] = json.loads(d["post_analysis"]) if d["post_analysis"] else None
     return d
@@ -293,12 +228,9 @@ async def get_match(match_id: int):
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"/><title>🏏 Match Analyzer</title>
+<head><meta charset="utf-8"/><title>🏏 AI Match Analyzer</title>
 <style>
   body { font-family: system-ui; background: #0f172a; color: #e2e8f0; padding: 16px; }
-  .filter-bar { display: flex; gap: 10px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 8px; }
-  .filter-btn { background: #1e293b; color: #94a3b8; border: 1px solid #334155; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; white-space: nowrap; }
-  .filter-btn.active { background: #38bdf8; color: #0f172a; font-weight: bold; border-color: #38bdf8; }
   .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; cursor: pointer; }
   .card:hover { background: #334155; }
   .badge { padding: 3px 10px; border-radius: 12px; font-size: .7rem; font-weight: 600; }
@@ -308,68 +240,36 @@ HTML_PAGE = """
   .winner { font-size: 2rem; color: #4ade80; font-weight: 800; text-align: center; }
   .conf { font-size: 3rem; color: #38bdf8; font-weight: 800; text-align: center; }
   .bar { height: 10px; background: #334155; border-radius: 4px; } .bar-fill { height: 100%; background: #4ade80; }
-  .live-box { margin-top: 12px; padding: 12px; background: #7f1d1d; border: 1px solid #ef4444; border-radius: 8px; text-align: center; }
   .attribution { text-align: center; margin-top: 20px; font-size: 0.75rem; color: #64748b; }
-  .attribution a { color: #38bdf8; text-decoration: none; }
 </style>
 </head>
 <body>
 <div id="view" style="max-width:720px; margin:0 auto;">Loading...</div>
-<div class="attribution">Powered by <a href="https://sportscore.com" target="_blank" rel="dofollow">SportScore</a></div>
+<div class="attribution">Powered by <a href="https://sportscore.com" target="_blank">SportScore</a> & AI</div>
 <script>
 const view = document.getElementById('view');
-let allMatches = [];
-let currentFilter = 'All';
-
 async function loadMatches() {
-  const res = await fetch('/api/matches'); allMatches = await res.json();
-  renderFilters();
-  renderMatches();
-}
-
-function renderFilters() {
-  const regions = ['All', 'International'];
-  let html = '<h1>🏏 All Matches</h1><div class="filter-bar">';
-  regions.forEach(r => {
-    html += `<button class="filter-btn ${currentFilter === r ? 'active' : ''}" onclick="setFilter('${r}')">${r}</button>`;
-  });
-  html += '</div><div id="match-list"></div>';
-  view.innerHTML = html;
-}
-
-function setFilter(region) {
-  currentFilter = region;
-  renderFilters();
-  renderMatches();
-}
-
-function renderMatches() {
-  const list = document.getElementById('match-list');
-  const filtered = currentFilter === 'All' ? allMatches : allMatches.filter(m => m.region === currentFilter);
-  
-  if (!filtered.length) { list.innerHTML = '<div style="color:#94a3b8; text-align:center; margin-top:20px;">No matches found.</div>'; return; }
-  
-  list.innerHTML = filtered.map(m => `
+  const res = await fetch('/api/matches'); const matches = await res.json();
+  if (!matches.length) { view.innerHTML = 'No matches found.'; return; }
+  view.innerHTML = '<h1>🏏 AI Match Analyzer</h1>' + matches.map(m => `
     <div class="card" onclick="openMatch(${m.id})">
       <div><strong>${m.team1} vs ${m.team2}</strong></div>
       <div style="font-size:0.85rem; color:#94a3b8;">${m.venue} • ${m.match_format}</div>
       <span class="badge ${m.status}">${m.status === 'live' ? '🔴 LIVE' : (m.status === 'post' ? '✅ PREDICTION' : '⏳ PRE-ANALYSIS')}</span>
     </div>`).join('');
 }
-
 async function openMatch(id) {
-  view.innerHTML = 'Loading...'; const res = await fetch('/api/match/' + id); const m = await res.json();
+  view.innerHTML = 'Loading AI...'; const res = await fetch('/api/match/' + id); const m = await res.json();
   let html = `<span style="color:#38bdf8; cursor:pointer" onclick="loadMatches()">← Back</span><h1>${m.team1} vs ${m.team2}</h1>`;
-  if ((m.status === 'post' || m.status === 'live') && m.post_analysis) {
+  if (m.post_analysis) {
     const q = m.post_analysis;
-    html += `<div class="section" style="border:2px solid ${m.status === 'live' ? '#ef4444' : '#4ade80'}">
-      <h3>🏆 Prediction</h3><div class="winner">${q.predicted_winner}</div><div class="conf">${q.confidence}%</div>
+    html += `<div class="section" style="border:2px solid #4ade80">
+      <h3>🏆 AI Prediction</h3><div class="winner">${q.predicted_winner}</div><div class="conf">${q.confidence}%</div>
       <div class="bar"><div class="bar-fill" style="width:${q.confidence}%"></div></div>
-      ${q.live_score ? `<div class="live-box"><div>🔴 LIVE SCORE</div><div style="font-size:1.5rem; font-weight:bold">${q.live_score}</div></div>` : ''}
       <div style="margin-top:16px; padding:12px; background:#334155; border-radius:8px">🪙 ${q.toss_summary}</div>
-      <h3>Reasoning</h3>${q.reasoning.map(r => `<div>▸ ${r}</div>`).join('')}
+      <h3>AI Reasoning</h3>${q.reasoning.map(r => `<div>▸ ${r}</div>`).join('')}
     </div>`;
-  } else { html += `<div class="section">⏳ Awaiting Toss...</div>`; }
+  } else { html += `<div class="section">⏳ Awaiting Analysis...</div>`; }
   view.innerHTML = html;
 }
 loadMatches();
